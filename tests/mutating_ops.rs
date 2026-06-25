@@ -547,3 +547,43 @@ fn no_clobber_appends_a_fresh_region() {
     assert!(loads(&bin) > before, "expected a fresh PT_LOAD");
     assert!(Command::new(&bin).status().unwrap().success());
 }
+
+#[test]
+fn adds_gnu_stack_segment_when_absent() {
+    use patchelf_rs::ir::{pf, pt};
+    let orig = std::fs::read(sample("exe-dyn-le")).unwrap();
+    let mut img = patchelf_rs::parser::parse(&orig).unwrap();
+    // Drop every slot the op could otherwise reuse, forcing a fresh phdr.
+    img.phdrs
+        .retain(|p| p.p_type != pt::GNU_STACK && p.p_type != pt::NULL);
+    let before = img.phdrs.len();
+
+    let mut report = patchelf_rs::ops::Report { lines: vec![] };
+    patchelf_rs::ops::apply(
+        &mut img,
+        &patchelf_rs::cli::Operation::SetExecstack,
+        &patchelf_rs::ops::Modifiers::default(),
+        &mut report,
+    )
+    .unwrap();
+    assert_eq!(img.phdrs.len(), before + 1, "a new phdr should be appended");
+
+    let bytes = patchelf_rs::layout::finalize(&mut img, orig, None, false, false).unwrap();
+    let out = patchelf_rs::parser::parse(&bytes).unwrap();
+    let gs = out
+        .phdrs
+        .iter()
+        .find(|p| p.p_type == pt::GNU_STACK)
+        .expect("PT_GNU_STACK present");
+    assert_ne!(gs.flags & pf::X, 0, "stack should be executable");
+
+    let bin = Path::new(env!("CARGO_TARGET_TMPDIR")).join("gnustack-added");
+    std::fs::write(&bin, &bytes).unwrap();
+    let mut perms = std::fs::metadata(&bin).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+    std::fs::set_permissions(&bin, perms).unwrap();
+    assert!(
+        Command::new(&bin).status().unwrap().success(),
+        "patched binary runs"
+    );
+}

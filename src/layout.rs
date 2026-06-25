@@ -71,7 +71,11 @@ pub fn finalize(
     no_clobber: bool,
 ) -> Result<Vec<u8>> {
     let grown = grown_sections(image);
-    if grown.is_empty() {
+    // A pushed program header (e.g. a new PT_GNU_STACK) does not grow any
+    // section but still needs the PHT relocated to make room.
+    let orig_phnum = codec::read_ehdr(&original)?.2 as usize;
+    let phdrs_grew = image.phdrs.len() > orig_phnum;
+    if grown.is_empty() && !phdrs_grew {
         if debug {
             eprintln!("patchelf: no section grew; rewriting in place");
         }

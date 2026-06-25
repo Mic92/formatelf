@@ -545,9 +545,10 @@ fn set_os_abi(image: &mut ElfImage, name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Toggle PF_X on PT_GNU_STACK. Reuses a spare PT_NULL slot when the segment is
-/// absent; adding a brand-new segment would need program-header relocation and
-/// is rejected for now.
+/// Toggle PF_X on PT_GNU_STACK. When the segment is absent, reuse a spare
+/// PT_NULL slot if there is one, else append a new entry (the layout engine
+/// relocates the program header table to make room). PT_GNU_STACK carries no
+/// file content, so a fresh entry needs no offset/address assignment.
 fn modify_execstack(image: &mut ElfImage, set: bool) -> Result<()> {
     let flip = |flags: u32| {
         if set {
@@ -564,22 +565,21 @@ fn modify_execstack(image: &mut ElfImage, set: bool) -> Result<()> {
         p.flags = flip(p.flags);
         return Ok(());
     }
-    if let Some(p) = image.phdrs.iter_mut().find(|p| p.p_type == ir::pt::NULL) {
-        *p = ir::Phdr {
-            p_type: ir::pt::GNU_STACK,
-            flags: flip(ir::pf::R | ir::pf::W),
-            offset: 0,
-            vaddr: 0,
-            paddr: 0,
-            filesz: 0,
-            memsz: 0,
-            align: 1,
-        };
-        return Ok(());
+    let new = ir::Phdr {
+        p_type: ir::pt::GNU_STACK,
+        flags: flip(ir::pf::R | ir::pf::W),
+        offset: 0,
+        vaddr: 0,
+        paddr: 0,
+        filesz: 0,
+        memsz: 0,
+        align: 1,
+    };
+    match image.phdrs.iter_mut().find(|p| p.p_type == ir::pt::NULL) {
+        Some(p) => *p = new,
+        None => image.phdrs.push(new),
     }
-    Err(Error::Unsupported(
-        "adding a PT_GNU_STACK segment is not yet supported".into(),
-    ))
+    Ok(())
 }
 
 fn require_dynamic(image: &ElfImage) -> Result<()> {
