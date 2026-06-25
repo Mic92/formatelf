@@ -44,8 +44,13 @@ pub fn c_patchelf() -> Option<PathBuf> {
 }
 
 pub fn zig_available() -> bool {
-    Command::new("zig")
-        .arg("version")
+    tool_available("zig", &["version"])
+}
+
+/// True if `cmd args...` runs and exits successfully.
+pub fn tool_available(cmd: &str, args: &[&str]) -> bool {
+    Command::new(cmd)
+        .args(args)
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
