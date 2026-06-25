@@ -41,7 +41,6 @@ pub struct Args {
     pub ops: Vec<Operation>,
     pub files: Vec<PathBuf>,
     pub page_size: Option<u64>,
-    pub no_sort: bool,
     pub no_clobber_old_sections: bool,
     pub output: Option<PathBuf>,
     pub debug: bool,
@@ -139,7 +138,10 @@ where
                 args.ops
                     .push(Operation::RenameDynamicSymbols(PathBuf::from(v)));
             }
-            Long("no-sort") => args.no_sort = true,
+            // We never reorder program or section headers (new entries are
+            // appended in place), which is exactly what --no-sort requests, so
+            // it is accepted as a no-op.
+            Long("no-sort") => {}
             Long("no-clobber-old-sections") => args.no_clobber_old_sections = true,
             Long("output") => {
                 let v = p
