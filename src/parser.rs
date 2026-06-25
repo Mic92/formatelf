@@ -19,19 +19,20 @@ fn slice<'a>(data: &'a [u8], off: u64, len: u64, what: &str) -> Result<&'a [u8]>
 }
 
 pub fn parse(data: &[u8]) -> Result<ElfImage> {
-    let (ehdr, enc, phnum, shnum) = codec::read_ehdr(data)?;
+    let (mut ehdr, enc, raw_phnum, raw_shnum) = codec::read_ehdr(data)?;
+    let (phnum, shnum) = resolve_counts(data, enc, &mut ehdr, raw_phnum, raw_shnum)?;
 
     let phsize = codec::phdr_size(enc.class) as u64;
     let mut phdrs = Vec::with_capacity(phnum as usize);
     for i in 0..phnum {
-        let off = ehdr.phoff + i as u64 * phsize;
+        let off = ehdr.phoff + i * phsize;
         phdrs.push(codec::read_phdr(enc, slice(data, off, phsize, "phdr")?)?);
     }
 
     let shsize = codec::shdr_size(enc.class) as u64;
     let mut shdrs = Vec::with_capacity(shnum as usize);
     for i in 0..shnum {
-        let off = ehdr.shoff + i as u64 * shsize;
+        let off = ehdr.shoff + i * shsize;
         shdrs.push(codec::read_shdr(enc, slice(data, off, shsize, "shdr")?)?);
     }
 
@@ -54,6 +55,46 @@ pub fn parse(data: &[u8]) -> Result<ElfImage> {
         section_data,
         dynamic,
     })
+}
+
+/// Resolve the PN_XNUM / SHN_XINDEX escapes. When the 16-bit header fields
+/// can't hold the real counts, section 0's header carries them: sh_info for
+/// program headers, sh_size for sections, sh_link for the name string table.
+fn resolve_counts(
+    data: &[u8],
+    enc: Encoding,
+    ehdr: &mut crate::ir::Ehdr,
+    raw_phnum: u16,
+    raw_shnum: u16,
+) -> Result<(u64, u64)> {
+    let needs_escape =
+        raw_phnum == codec::PN_XNUM || raw_shnum == 0 || ehdr.shstrndx == codec::SHN_XINDEX as u32;
+    let sec0 = if ehdr.shoff != 0 && needs_escape {
+        let shsize = codec::shdr_size(enc.class) as u64;
+        Some(codec::read_shdr(
+            enc,
+            slice(data, ehdr.shoff, shsize, "shdr0")?,
+        )?)
+    } else {
+        None
+    };
+
+    let phnum = if raw_phnum == codec::PN_XNUM {
+        sec0.as_ref().map_or(raw_phnum as u64, |s| s.info as u64)
+    } else {
+        raw_phnum as u64
+    };
+    // e_shnum == 0 with a section table present means the count is in sh_size.
+    let shnum = match (raw_shnum, &sec0) {
+        (0, Some(s)) => s.size,
+        _ => raw_shnum as u64,
+    };
+    if ehdr.shstrndx == codec::SHN_XINDEX as u32 {
+        if let Some(s) = &sec0 {
+            ehdr.shstrndx = s.link;
+        }
+    }
+    Ok((phnum, shnum))
 }
 
 fn read_dynamic(data: &[u8], enc: Encoding, shdrs: &[Shdr]) -> Result<Vec<DynEntry>> {

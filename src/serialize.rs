@@ -43,8 +43,8 @@ pub fn write(image: &ElfImage, mut buf: Vec<u8>) -> Result<Vec<u8>> {
     codec::write_ehdr(
         enc,
         &image.ehdr,
-        image.phdrs.len() as u16,
-        image.shdrs.len() as u16,
+        image.phdrs.len(),
+        image.shdrs.len(),
         &mut tmp,
     )?;
     put(&mut buf, 0, &tmp, "ehdr")?;

@@ -16,8 +16,8 @@ fn check(path: &std::path::Path) {
     codec::write_ehdr(
         img.enc,
         &img.ehdr,
-        img.phdrs.len() as u16,
-        img.shdrs.len() as u16,
+        img.phdrs.len(),
+        img.shdrs.len(),
         &mut buf,
     )
     .unwrap();

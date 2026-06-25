@@ -104,7 +104,7 @@ pub fn read_ehdr(data: &[u8]) -> Result<(Ehdr, Encoding, u16, u16)> {
                     h.e_ehsize.get(e),
                     h.e_phentsize.get(e),
                     h.e_shentsize.get(e),
-                    h.e_shstrndx.get(e),
+                    h.e_shstrndx.get(e) as u32,
                 ),
                 h.e_phnum.get(e),
                 h.e_shnum.get(e),
@@ -124,7 +124,7 @@ pub fn read_ehdr(data: &[u8]) -> Result<(Ehdr, Encoding, u16, u16)> {
                     h.e_ehsize.get(e),
                     h.e_phentsize.get(e),
                     h.e_shentsize.get(e),
-                    h.e_shstrndx.get(e),
+                    h.e_shstrndx.get(e) as u32,
                 ),
                 h.e_phnum.get(e),
                 h.e_shnum.get(e),
@@ -135,14 +135,44 @@ pub fn read_ehdr(data: &[u8]) -> Result<(Ehdr, Encoding, u16, u16)> {
     Ok((ehdr, Encoding { class, endian }, phnum, shnum))
 }
 
+/// e_phnum == PN_XNUM signals the real count lives in section 0's sh_info.
+pub const PN_XNUM: u16 = 0xffff;
+/// First reserved section index; counts at/above it use the section-0 escape.
+pub const SHN_LORESERVE: u32 = 0xff00;
+/// e_shstrndx == SHN_XINDEX signals the real index lives in section 0's sh_link.
+pub const SHN_XINDEX: u16 = 0xffff;
+
+/// Compute the on-disk header count fields, substituting the section-0 escapes
+/// when the real counts exceed what the 16-bit fields can hold. The extended
+/// values themselves live in section 0's header, preserved across round-trip.
+fn ehdr_counts(h: &Ehdr, phnum: usize, shnum: usize) -> (u16, u16, u16) {
+    let e_phnum = if phnum >= PN_XNUM as usize {
+        PN_XNUM
+    } else {
+        phnum as u16
+    };
+    let e_shnum = if shnum >= SHN_LORESERVE as usize {
+        0
+    } else {
+        shnum as u16
+    };
+    let e_shstrndx = if h.shstrndx >= SHN_LORESERVE {
+        SHN_XINDEX
+    } else {
+        h.shstrndx as u16
+    };
+    (e_phnum, e_shnum, e_shstrndx)
+}
+
 pub fn write_ehdr(
     enc: Encoding,
     h: &Ehdr,
-    phnum: u16,
-    shnum: u16,
+    phnum: usize,
+    shnum: usize,
     out: &mut Vec<u8>,
 ) -> Result<()> {
     let e = endianness(enc.endian);
+    let (phnum, shnum, shstrndx) = ehdr_counts(h, phnum, shnum);
     match enc.class {
         Class::Elf64 => {
             let hdr = elf::FileHeader64::<Endianness> {
@@ -159,7 +189,7 @@ pub fn write_ehdr(
                 e_phnum: U16::new(e, phnum),
                 e_shentsize: U16::new(e, h.shentsize),
                 e_shnum: U16::new(e, shnum),
-                e_shstrndx: U16::new(e, h.shstrndx),
+                e_shstrndx: U16::new(e, shstrndx),
             };
             let mut bytes = object::bytes_of(&hdr).to_vec();
             bytes[..16].copy_from_slice(&h.ident);
@@ -180,7 +210,7 @@ pub fn write_ehdr(
                 e_phnum: U16::new(e, phnum),
                 e_shentsize: U16::new(e, h.shentsize),
                 e_shnum: U16::new(e, shnum),
-                e_shstrndx: U16::new(e, h.shstrndx),
+                e_shstrndx: U16::new(e, shstrndx),
             };
             let mut bytes = object::bytes_of(&hdr).to_vec();
             bytes[..16].copy_from_slice(&h.ident);
@@ -396,6 +426,41 @@ pub fn dyn_size(class: Class) -> usize {
 mod tests {
     use super::*;
     use crate::ir::Shdr;
+
+    #[test]
+    fn extended_counts_use_section0_escapes() {
+        let enc = Encoding {
+            class: Class::Elf64,
+            endian: Endian::Little,
+        };
+        let mut ident = [0u8; 16];
+        ident[..4].copy_from_slice(b"\x7fELF");
+        ident[4] = 2; // ELFCLASS64
+        ident[5] = 1; // little-endian
+        let h = Ehdr {
+            e_type: 2,
+            machine: 62,
+            version: 1,
+            entry: 0,
+            phoff: 0,
+            shoff: 64,
+            flags: 0,
+            ehsize: 64,
+            phentsize: 56,
+            shentsize: 64,
+            shstrndx: 0x1_0000,
+            os_abi: 0,
+            abi_version: 0,
+            ident,
+        };
+        let mut out = Vec::new();
+        write_ehdr(enc, &h, 0x1_0000, 0x1_0000, &mut out).unwrap();
+        // read_ehdr returns the raw on-disk fields, which must carry the escapes.
+        let (got, _, phnum, shnum) = read_ehdr(&out).unwrap();
+        assert_eq!(phnum, PN_XNUM);
+        assert_eq!(shnum, 0);
+        assert_eq!(got.shstrndx, SHN_XINDEX as u32);
+    }
 
     #[test]
     fn elf32_rejects_oversized_offset() {

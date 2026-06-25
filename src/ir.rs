@@ -31,7 +31,9 @@ pub struct Ehdr {
     pub ehsize: u16,
     pub phentsize: u16,
     pub shentsize: u16,
-    pub shstrndx: u16,
+    /// Resolved section-name string-table index; widened to hold an
+    /// SHN_XINDEX value taken from section 0's sh_link.
+    pub shstrndx: u32,
     pub os_abi: u8,
     pub abi_version: u8,
     /// First 16 bytes verbatim; preserves padding/OS-specific bytes on re-encode.
