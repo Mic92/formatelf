@@ -2,7 +2,7 @@
 //! layout bugs surface as errors instead of silently corrupt binaries.
 
 use crate::error::{Error, Result};
-use crate::ir::{dt, pf, pt, sht, ElfImage};
+use crate::ir::{dt, pf, pt, sht, ElfImage, Phdr};
 
 fn fail(msg: impl Into<String>) -> Error {
     Error::Serialize(msg.into())
@@ -42,7 +42,28 @@ pub fn validate(image: &ElfImage) -> Result<()> {
         return Err(fail("program header table not covered by a PT_LOAD"));
     }
 
+    phdr_anchor(image, &loads)?;
     dynamic_consistency(image)?;
+    Ok(())
+}
+
+/// The kernel passes AT_PHDR = base_vaddr + e_phoff and the loader derives its
+/// load bias from PT_PHDR.p_vaddr, so for ET_DYN the table must satisfy
+/// PT_PHDR.p_vaddr == base_vaddr + e_phoff (base = the offset-0 PT_LOAD).
+/// Getting this wrong loads fine on lenient x86_64 glibc but aborts elsewhere.
+fn phdr_anchor(image: &ElfImage, loads: &[&Phdr]) -> Result<()> {
+    let Some(phdr) = image.phdrs.iter().find(|p| p.p_type == pt::PHDR) else {
+        return Ok(());
+    };
+    let Some(base) = loads.iter().min_by_key(|p| p.offset) else {
+        return Err(fail("PT_PHDR present but no PT_LOAD"));
+    };
+    if phdr.offset != image.ehdr.phoff {
+        return Err(fail("PT_PHDR offset disagrees with e_phoff"));
+    }
+    if phdr.vaddr != base.vaddr + (image.ehdr.phoff - base.offset) {
+        return Err(fail("PT_PHDR vaddr breaks the AT_PHDR load-bias invariant"));
+    }
     Ok(())
 }
 
