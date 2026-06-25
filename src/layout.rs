@@ -2,8 +2,12 @@
 //! serializer. Mirrors patchelf's `rewriteSectionsLibrary` with the program
 //! header table relocated to the end of the file: grown sections, a fresh copy
 //! of the (extended) PHT, and the SHT are appended in a new PT_LOAD segment.
-//! Only ET_DYN is supported; growth of ET_EXEC needs the separate shifting
-//! strategy and is rejected.
+//!
+//! This works for both ET_DYN and ET_EXEC: the relocated sections are reached
+//! through DT_* tags and PT_* segments (which we fix up), not absolute code
+//! references, so placing them at a fresh high virtual address is safe.
+//! patchelf uses a separate shifting strategy for ET_EXEC only to keep the PHT
+//! at the start for very old kernels; we relocate it like the library path.
 
 use crate::codec;
 use crate::constraints;
@@ -62,9 +66,9 @@ pub fn finalize(image: &mut ElfImage, original: &[u8], page_size: Option<u64>) -
         sync_dynamic(image);
         return serialize::write(image, original.to_vec());
     }
-    if image.ehdr.e_type != et::DYN {
+    if image.ehdr.e_type != et::DYN && image.ehdr.e_type != et::EXEC {
         return Err(Error::Unsupported(
-            "growing a non-PIE executable is not yet supported".into(),
+            "unsupported ELF type for relayout".into(),
         ));
     }
     relayout(image, original, grown, page_size)

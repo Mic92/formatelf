@@ -281,3 +281,28 @@ fn add_debug_tag_inserts_entry() {
     // Runs because DT_DEBUG is benign.
     assert!(Command::new(&bin).status().unwrap().success());
 }
+
+#[test]
+fn set_rpath_on_non_pie_executable() {
+    let Some(reference) = guard() else { return };
+    let src = sample("exe-nopie-le");
+    assert!(Command::new(&src).status().unwrap().success());
+
+    let bin = copy("exe-nopie-le", "rpath");
+    let long = "/a/much/longer/rpath/than/before/for/the/exec/path/lib";
+    patch(&bin, &["--set-rpath", long]);
+
+    assert_eq!(out(&reference, "--print-rpath", &bin).trim(), long);
+    let img = patchelf_rs::parser::parse(&std::fs::read(&bin).unwrap()).unwrap();
+    let strtab = img
+        .dynamic
+        .iter()
+        .find(|d| d.tag == patchelf_rs::ir::dt::STRTAB)
+        .unwrap()
+        .val;
+    assert_eq!(strtab, img.shdrs[img.find_section(".dynstr").unwrap()].addr);
+    assert!(
+        Command::new(&bin).status().unwrap().success(),
+        "patched ET_EXEC failed to run"
+    );
+}

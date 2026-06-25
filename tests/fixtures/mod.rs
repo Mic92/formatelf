@@ -22,6 +22,12 @@ const SPECS: &[(&str, &str, &[&str])] = &[
         "x86_64-linux-gnu",
         &["-fPIE", "-pie", "-Wl,-rpath,/opt/custom/lib"],
     ),
+    // Non-PIE (ET_EXEC) executable, for the exec growth path.
+    (
+        "exe-nopie-le",
+        "x86_64-linux-gnu",
+        &["-no-pie", "-fno-pie", "-Wl,-rpath,/opt/custom/lib"],
+    ),
     // Shared object carrying a DT_SONAME.
     (
         "so-soname-le",
