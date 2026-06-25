@@ -73,9 +73,13 @@ pub struct DynEntry {
 }
 
 pub mod sht {
+    pub const SYMTAB: u32 = 2;
     pub const STRTAB: u32 = 3;
+    pub const RELA: u32 = 4;
     pub const DYNAMIC: u32 = 6;
     pub const NOBITS: u32 = 8;
+    pub const REL: u32 = 9;
+    pub const DYNSYM: u32 = 11;
 }
 
 pub mod et {

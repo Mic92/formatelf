@@ -141,6 +141,16 @@ fn relayout(
     let mut buf = original;
     buf.resize((start_off + needed + 1) as usize, 0);
 
+    // Moving a section to a new address corrupts anything that referenced its
+    // old address by value. We only fix DT_* tags, so refuse to relocate a
+    // section that relocations or symbols point into.
+    let moved: Vec<(u64, u64)> = grown
+        .iter()
+        .map(|&i| (image.shdrs[i].addr, image.shdrs[i].size))
+        .filter(|&(addr, _)| addr != 0)
+        .collect();
+    assert_no_address_refs(image, &moved)?;
+
     // Lay out the appended region: PHT, SHT, then the grown sections.
     image.ehdr.phoff = start_off;
     image.ehdr.shoff = start_off + pht_size;
@@ -170,6 +180,78 @@ fn relayout(
 
     constraints::validate(image)?;
     serialize::write(image, buf)
+}
+
+/// True if any fixed-stride record in `sec` has its `width`-byte field at
+/// offset `fo` satisfying `pred`.
+fn any_field(
+    image: &ElfImage,
+    sec: usize,
+    stride: usize,
+    fo: usize,
+    width: usize,
+    pred: impl Fn(u64) -> bool,
+) -> bool {
+    let big = image.enc.endian == crate::ir::Endian::Big;
+    image.section_data[sec].chunks_exact(stride).any(|r| {
+        let b = &r[fo..fo + width];
+        let v = match width {
+            8 => {
+                let a: [u8; 8] = b.try_into().unwrap();
+                if big {
+                    u64::from_be_bytes(a)
+                } else {
+                    u64::from_le_bytes(a)
+                }
+            }
+            _ => {
+                let a: [u8; 4] = b.try_into().unwrap();
+                if big {
+                    u32::from_be_bytes(a) as u64
+                } else {
+                    u32::from_le_bytes(a) as u64
+                }
+            }
+        };
+        pred(v)
+    })
+}
+
+/// Error if any relocation target (r_offset) or symbol value (st_value) lands
+/// inside one of the address ranges about to be relocated.
+fn assert_no_address_refs(image: &ElfImage, ranges: &[(u64, u64)]) -> Result<()> {
+    if ranges.is_empty() {
+        return Ok(());
+    }
+    let hits = |v: u64| ranges.iter().any(|&(a, sz)| v >= a && v < a + sz);
+    let elf64 = image.enc.class == crate::ir::Class::Elf64;
+    let ptr = if elf64 { 8 } else { 4 };
+    // r_offset is the first field of Elf_Rel/Elf_Rela. st_value sits at offset
+    // 8 (Elf64_Sym) or 4 (Elf32_Sym).
+    let (rel_stride, rela_stride) = if elf64 { (16, 24) } else { (8, 12) };
+    let (sym_stride, sym_off) = if elf64 { (24, 8) } else { (16, 4) };
+
+    const SHF_ALLOC: u64 = 0x2;
+    for (i, s) in image.shdrs.iter().enumerate() {
+        // Only loaded tables matter at runtime; .symtab and friends are not
+        // mapped and legitimately carry stale STT_SECTION values after a move.
+        if s.flags & SHF_ALLOC == 0 {
+            continue;
+        }
+        let referenced = match s.sh_type {
+            sht::RELA => any_field(image, i, rela_stride, 0, ptr, hits),
+            sht::REL => any_field(image, i, rel_stride, 0, ptr, hits),
+            sht::DYNSYM | sht::SYMTAB => any_field(image, i, sym_stride, sym_off, ptr, hits),
+            _ => continue,
+        };
+        if referenced {
+            return Err(Error::Unsupported(format!(
+                "cannot relocate section referenced by {} entries at its address",
+                image.section_name(i).unwrap_or("?")
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Re-point PT_PHDR/PT_DYNAMIC/PT_INTERP at their (possibly moved) targets.
