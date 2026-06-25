@@ -158,6 +158,42 @@ where
     Ok(Parsed::Run(args))
 }
 
+pub const HELP: &str = "\
+syntax: patchelf
+  [--set-interpreter FILENAME]
+  [--page-size SIZE]
+  [--print-interpreter]
+  [--print-os-abi]
+  [--set-os-abi ABI]
+  [--print-soname]
+  [--set-soname SONAME]
+  [--set-rpath RPATH]
+  [--add-rpath RPATH]
+  [--remove-rpath]
+  [--shrink-rpath]
+  [--allowed-rpath-prefixes PREFIXES]
+  [--print-rpath]
+  [--force-rpath]
+  [--add-needed LIBRARY]
+  [--remove-needed LIBRARY]
+  [--replace-needed LIBRARY NEW_LIBRARY]
+  [--print-needed]
+  [--no-default-lib]
+  [--no-sort]
+  [--clear-symbol-version SYMBOL]
+  [--add-debug-tag]
+  [--build-resolution-cache]
+  [--print-execstack]
+  [--clear-execstack]
+  [--set-execstack]
+  [--rename-dynamic-symbols NAME_MAP_FILE]
+  [--no-clobber-old-sections]
+  [--output FILE]
+  [--debug]
+  [--version]
+  FILENAME...
+";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,42 +254,9 @@ mod tests {
     #[test]
     fn help_and_version() {
         assert!(matches!(parse(os(&["--help"])).unwrap(), Parsed::Help));
-        assert!(matches!(parse(os(&["--version"])).unwrap(), Parsed::Version));
+        assert!(matches!(
+            parse(os(&["--version"])).unwrap(),
+            Parsed::Version
+        ));
     }
 }
-
-pub const HELP: &str = "\
-syntax: patchelf
-  [--set-interpreter FILENAME]
-  [--page-size SIZE]
-  [--print-interpreter]
-  [--print-os-abi]
-  [--set-os-abi ABI]
-  [--print-soname]
-  [--set-soname SONAME]
-  [--set-rpath RPATH]
-  [--add-rpath RPATH]
-  [--remove-rpath]
-  [--shrink-rpath]
-  [--allowed-rpath-prefixes PREFIXES]
-  [--print-rpath]
-  [--force-rpath]
-  [--add-needed LIBRARY]
-  [--remove-needed LIBRARY]
-  [--replace-needed LIBRARY NEW_LIBRARY]
-  [--print-needed]
-  [--no-default-lib]
-  [--no-sort]
-  [--clear-symbol-version SYMBOL]
-  [--add-debug-tag]
-  [--build-resolution-cache]
-  [--print-execstack]
-  [--clear-execstack]
-  [--set-execstack]
-  [--rename-dynamic-symbols NAME_MAP_FILE]
-  [--no-clobber-old-sections]
-  [--output FILE]
-  [--debug]
-  [--version]
-  FILENAME...
-";

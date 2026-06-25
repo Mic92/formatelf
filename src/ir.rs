@@ -31,8 +31,11 @@ pub struct Ehdr {
     pub ehsize: u16,
     pub phentsize: u16,
     pub shentsize: u16,
+    pub shstrndx: u16,
     pub os_abi: u8,
     pub abi_version: u8,
+    /// First 16 bytes verbatim; preserves padding/OS-specific bytes on re-encode.
+    pub ident: [u8; 16],
 }
 
 #[derive(Debug, Clone)]

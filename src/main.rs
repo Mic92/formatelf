@@ -1,16 +1,7 @@
-mod cli;
-mod constraints;
-mod error;
-mod ir;
-mod layout;
-mod ops;
-mod parser;
-mod serialize;
-
 use std::process::ExitCode;
 
-use cli::Parsed;
-use error::Error;
+use patchelf_rs::cli::{self, Parsed};
+use patchelf_rs::error::{self, Error};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 

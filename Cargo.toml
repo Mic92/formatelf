@@ -5,9 +5,14 @@ edition = "2021"
 description = "Modify the dynamic linker and RPATH of ELF executables"
 license = "MIT"
 
+[lib]
+name = "patchelf_rs"
+path = "src/lib.rs"
+
 [[bin]]
 name = "patchelf"
 path = "src/main.rs"
+test = false
 
 [dependencies]
 object = { version = "0.36", default-features = false, features = ["read_core", "elf", "std"] }
