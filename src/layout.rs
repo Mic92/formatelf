@@ -63,12 +63,16 @@ fn grown_sections(image: &ElfImage) -> Vec<usize> {
         .collect()
 }
 
-pub fn finalize(image: &mut ElfImage, original: &[u8], page_size: Option<u64>) -> Result<Vec<u8>> {
+pub fn finalize(
+    image: &mut ElfImage,
+    original: Vec<u8>,
+    page_size: Option<u64>,
+) -> Result<Vec<u8>> {
     let grown = grown_sections(image);
     if grown.is_empty() {
         sync_dynamic(image)?;
         constraints::validate(image)?;
-        return serialize::write(image, original.to_vec());
+        return serialize::write(image, original);
     }
     if image.ehdr.e_type != et::DYN && image.ehdr.e_type != et::EXEC {
         return Err(Error::Unsupported(
@@ -95,7 +99,7 @@ fn page_size_for(image: &ElfImage, forced: Option<u64>) -> u64 {
 
 fn relayout(
     image: &mut ElfImage,
-    original: &[u8],
+    original: Vec<u8>,
     grown: Vec<usize>,
     page_size: Option<u64>,
 ) -> Result<Vec<u8>> {
@@ -134,7 +138,7 @@ fn relayout(
 
     let start_off = round_up(original.len() as u64, align);
     // +1: older binutils readelf rejects a PT_DYNAMIC as large as the file.
-    let mut buf = original.to_vec();
+    let mut buf = original;
     buf.resize((start_off + needed + 1) as usize, 0);
 
     // Lay out the appended region: PHT, SHT, then the grown sections.
