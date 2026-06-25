@@ -37,6 +37,7 @@ pub fn apply(image: &mut ElfImage, op: &Operation, report: &mut Report) -> Resul
         Operation::SetRpath(path) => set_rpath(image, path, false)?,
         Operation::ForceRpath => {}
         Operation::SetInterpreter(p) => set_interpreter(image, p)?,
+        Operation::SetSoname(name) => set_soname(image, name)?,
         other => return Err(Error::Unsupported(format!("{other:?}"))),
     }
     Ok(())
@@ -102,6 +103,12 @@ fn dynstr_append(buf: &mut Vec<u8>, s: &str) -> u64 {
     off
 }
 
+fn dynstr_section(image: &ElfImage) -> Result<usize> {
+    image
+        .find_section(".dynstr")
+        .ok_or_else(|| Error::Missing("cannot find section .dynstr".into()))
+}
+
 fn set_interpreter(image: &mut ElfImage, new: &str) -> Result<()> {
     let idx = image
         .find_section(".interp")
@@ -109,6 +116,27 @@ fn set_interpreter(image: &mut ElfImage, new: &str) -> Result<()> {
     let mut bytes = new.as_bytes().to_vec();
     bytes.push(0);
     image.section_data[idx] = bytes;
+    Ok(())
+}
+
+/// Only meaningful for shared objects; a no-op on executables, matching patchelf.
+fn set_soname(image: &mut ElfImage, name: &str) -> Result<()> {
+    if image.ehdr.e_type != ir::et::DYN {
+        return Ok(());
+    }
+    require_dynamic(image)?;
+    let dynstr_idx = dynstr_section(image)?;
+    let off = dynstr_append(&mut image.section_data[dynstr_idx], name);
+    match image.dynamic.iter().position(|d| d.tag == dt::SONAME) {
+        Some(i) => image.dynamic[i].val = off,
+        None => image.dynamic.insert(
+            0,
+            ir::DynEntry {
+                tag: dt::SONAME,
+                val: off,
+            },
+        ),
+    }
     Ok(())
 }
 

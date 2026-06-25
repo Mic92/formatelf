@@ -71,3 +71,17 @@ fn set_interpreter_grows_and_runs() {
         "patched binary failed to run"
     );
 }
+
+#[test]
+fn set_soname_on_shared_object() {
+    let Some(reference) = guard() else { return };
+    let lib = copy("so-soname-le", "soname");
+    patch(
+        &lib,
+        &["--set-soname", "librenamed-with-a-much-longer-name.so.7"],
+    );
+    assert_eq!(
+        out(&reference, "--print-soname", &lib).trim(),
+        "librenamed-with-a-much-longer-name.so.7"
+    );
+}
