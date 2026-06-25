@@ -134,14 +134,23 @@ fn relayout(
     let page = page_size_for(image, page_size);
     let mut align = page;
     let mut start_page = 0u64;
+    let mut base_vaddr = u64::MAX;
     let mut have_phdr_seg = false;
     for p in &image.phdrs {
         start_page = start_page.max(p.vaddr + p.memsz);
         align = align.max(p.align);
+        if p.p_type == pt::LOAD {
+            base_vaddr = base_vaddr.min(p.vaddr);
+        }
         if p.p_type == pt::PHDR {
             have_phdr_seg = true;
         }
     }
+    let base_vaddr = if base_vaddr == u64::MAX {
+        0
+    } else {
+        base_vaddr
+    };
     if !have_phdr_seg {
         return Err(Error::Unsupported(
             "no PT_PHDR segment; cannot relocate program headers".into(),
@@ -159,7 +168,13 @@ fn relayout(
         needed += round_up(section_len(image, i), sec_align);
     }
 
-    let start_off = round_up(region_start.unwrap_or(orig_len), align);
+    // The kernel passes AT_PHDR = base_vaddr + e_phoff, and the loader derives
+    // its load bias from PT_PHDR.vaddr, so every byte in the appended region
+    // must keep vaddr == base_vaddr + file_offset. Pick a file offset that also
+    // places the region past all existing segments to avoid overlap.
+    let min_off = start_page.saturating_sub(base_vaddr);
+    let start_off = round_up(region_start.unwrap_or(orig_len).max(min_off), align);
+    let region_vaddr = base_vaddr + start_off;
     // +1: older binutils readelf rejects a PT_DYNAMIC as large as the file.
     let mut buf = original;
     buf.resize((start_off + needed + 1) as usize, 0);
@@ -181,7 +196,7 @@ fn relayout(
     for &i in &relocate {
         let len = section_len(image, i);
         image.shdrs[i].offset = cur;
-        image.shdrs[i].addr = start_page + (cur - start_off);
+        image.shdrs[i].addr = region_vaddr + (cur - start_off);
         image.shdrs[i].size = len;
         cur += round_up(len, sec_align);
     }
@@ -190,8 +205,8 @@ fn relayout(
         p_type: pt::LOAD,
         flags: pf::R | pf::W,
         offset: start_off,
-        vaddr: start_page,
-        paddr: start_page,
+        vaddr: region_vaddr,
+        paddr: region_vaddr,
         filesz: needed,
         memsz: needed,
         align,
