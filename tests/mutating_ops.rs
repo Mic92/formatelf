@@ -471,3 +471,47 @@ fn rename_dynamic_symbols_matches_reference() {
         }
     }
 }
+
+#[test]
+fn build_resolution_cache_matches_reference() {
+    let Some(reference) = guard() else { return };
+    let src = sample("exe-dyn-le");
+    let needed = out(&reference, "--print-needed", &src);
+
+    // A run-path directory holding (placeholder) files for each needed lib.
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("ldcache-dir");
+    std::fs::create_dir_all(&dir).unwrap();
+    for lib in needed.lines() {
+        std::fs::copy(&src, dir.join(lib)).unwrap();
+    }
+
+    let mk = |tag: &str| {
+        let bin = copy("exe-dyn-le", tag);
+        patch(&bin, &["--set-rpath", dir.to_str().unwrap()]);
+        bin
+    };
+    let ours = mk("ldcache-ours");
+    let theirs = mk("ldcache-ref");
+    patch(&ours, &["--build-resolution-cache"]);
+    assert!(Command::new(&reference)
+        .arg("--build-resolution-cache")
+        .arg(&theirs)
+        .status()
+        .unwrap()
+        .success());
+
+    let a = patchelf_rs::parser::parse(&std::fs::read(&ours).unwrap()).unwrap();
+    let b = patchelf_rs::parser::parse(&std::fs::read(&theirs).unwrap()).unwrap();
+    let ai = a.find_section(".note.nixos.ldcache").expect("note written");
+    let bi = b.find_section(".note.nixos.ldcache").unwrap();
+    assert_eq!(
+        a.section_data[ai], b.section_data[bi],
+        "ld-cache note differs"
+    );
+
+    // The note must be covered by a PT_NOTE segment.
+    assert!(a
+        .phdrs
+        .iter()
+        .any(|p| p.p_type == patchelf_rs::ir::pt::NOTE && p.vaddr == a.shdrs[ai].addr));
+}

@@ -133,7 +133,7 @@ fn relayout(
         .filter(|&i| {
             let s = &image.shdrs[i];
             s.sh_type != sht::NOBITS
-                && s.size > 0
+                && !image.section_data[i].is_empty()
                 && (grown.contains(&i) || region_start.is_some_and(|r| s.offset >= r))
         })
         .collect();
@@ -311,6 +311,7 @@ fn sync_segments(image: &mut ElfImage) {
         (s.offset, s.addr, s.size)
     };
     let interp = image.find_section(".interp").map(extent);
+    let ldcache = image.find_section(".note.nixos.ldcache").map(extent);
     let dynamic = image
         .shdrs
         .iter()
@@ -326,6 +327,13 @@ fn sync_segments(image: &mut ElfImage) {
             }
             pt::DYNAMIC => {
                 if let Some((off, addr, size)) = dynamic {
+                    set_segment(p, off, addr, size);
+                }
+            }
+            // Only the placeholder (filesz 0) we just added, not pre-existing
+            // notes like .note.ABI-tag.
+            pt::NOTE if p.filesz == 0 => {
+                if let Some((off, addr, size)) = ldcache {
                     set_segment(p, off, addr, size);
                 }
             }

@@ -96,6 +96,7 @@ pub mod pt {
     pub const LOAD: u32 = 1;
     pub const DYNAMIC: u32 = 2;
     pub const INTERP: u32 = 3;
+    pub const NOTE: u32 = 4;
     pub const PHDR: u32 = 6;
     pub const GNU_STACK: u32 = 0x6474_e551;
 }
