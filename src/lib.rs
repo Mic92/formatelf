@@ -7,3 +7,4 @@ pub mod layout;
 pub mod ops;
 pub mod parser;
 pub mod serialize;
+pub mod symbols;

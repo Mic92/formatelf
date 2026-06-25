@@ -427,3 +427,47 @@ fn repeated_patching_reuses_the_appended_region() {
     }
     assert!(Command::new(&bin).status().unwrap().success());
 }
+
+#[test]
+fn rename_dynamic_symbols_matches_reference() {
+    let Some(reference) = guard() else { return };
+    let src = sample("exe-dyn-le");
+
+    // First dynamic symbol with a plain name, found via our own parser.
+    let img = patchelf_rs::parser::parse(&std::fs::read(&src).unwrap()).unwrap();
+    let dynsym = img.find_section(".dynsym").unwrap();
+    let dynstr = img.find_section(".dynstr").unwrap();
+    let name = (0..img.section_data[dynsym].len() / 24)
+        .filter_map(|i| {
+            let b = &img.section_data[dynsym][i * 24..];
+            let st_name = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+            patchelf_rs::ir::cstr(&img.section_data[dynstr], st_name)
+        })
+        .find(|n| n.bytes().next().is_some_and(|c| c.is_ascii_alphabetic()))
+        .unwrap()
+        .to_owned();
+
+    let map = Path::new(env!("CARGO_TARGET_TMPDIR")).join("rename.map");
+    std::fs::write(&map, format!("{name} {name}_renamed\n")).unwrap();
+
+    let ours = copy("exe-dyn-le", "rename-ours");
+    let theirs = copy("exe-dyn-le", "rename-ref");
+    patch(&ours, &["--rename-dynamic-symbols", map.to_str().unwrap()]);
+    assert!(Command::new(&reference)
+        .args(["--rename-dynamic-symbols", map.to_str().unwrap()])
+        .arg(&theirs)
+        .status()
+        .unwrap()
+        .success());
+
+    let a = patchelf_rs::parser::parse(&std::fs::read(&ours).unwrap()).unwrap();
+    let b = patchelf_rs::parser::parse(&std::fs::read(&theirs).unwrap()).unwrap();
+    for sec in [".dynsym", ".gnu.hash", ".hash", ".gnu.version", ".dynstr"] {
+        if let (Some(i), Some(j)) = (a.find_section(sec), b.find_section(sec)) {
+            assert_eq!(
+                a.section_data[i], b.section_data[j],
+                "{sec} differs from reference"
+            );
+        }
+    }
+}

@@ -66,9 +66,8 @@ pub fn apply(
         Operation::ClearExecstack => modify_execstack(image, false)?,
         Operation::SetExecstack => modify_execstack(image, true)?,
         Operation::ClearSymbolVersion(sym) => clear_symbol_version(image, sym)?,
-        // Needs full GNU/SysV hash-table rebuild and reloc index remapping.
-        Operation::RenameDynamicSymbols(_) => {
-            return Err(Error::Unsupported("--rename-dynamic-symbols".into()))
+        Operation::RenameDynamicSymbols(path) => {
+            crate::symbols::rename_dynamic_symbols(image, &parse_symbol_map(path)?)?
         }
         // patchelf-specific resolution-cache note, not implemented.
         Operation::BuildResolutionCache => {
@@ -215,6 +214,29 @@ fn modify_rpath(image: &mut ElfImage, new: &str, force: bool) -> Result<()> {
 }
 
 /// Append a NUL-terminated string to a string table, returning its offset.
+/// Parse a symbol rename map: whitespace-separated `old new` pairs, one per
+/// line, blank lines ignored (the patchelf NAME_MAP_FILE format).
+fn parse_symbol_map(path: &std::path::Path) -> Result<std::collections::BTreeMap<String, String>> {
+    let text = std::fs::read_to_string(path).map_err(|source| Error::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let mut map = std::collections::BTreeMap::new();
+    for line in text.lines() {
+        let mut it = line.split_whitespace();
+        match (it.next(), it.next()) {
+            (Some(old), Some(new)) => {
+                map.insert(old.to_string(), new.to_string());
+            }
+            (None, _) => {}
+            (Some(_), None) => {
+                return Err(Error::Cli(format!("malformed symbol map line: {line:?}")))
+            }
+        }
+    }
+    Ok(map)
+}
+
 fn dynstr_append(buf: &mut Vec<u8>, s: &str) -> u64 {
     let off = buf.len() as u64;
     buf.extend_from_slice(s.as_bytes());
