@@ -41,6 +41,10 @@ fn run(args: cli::Args) -> error::Result<()> {
     }
 
     let mutating = args.ops.iter().any(|o| !is_read_only(o));
+    let force_rpath = args
+        .ops
+        .iter()
+        .any(|o| matches!(o, cli::Operation::ForceRpath));
 
     for file in &args.files {
         let data = std::fs::read(file).map_err(|source| Error::Io {
@@ -54,7 +58,7 @@ fn run(args: cli::Args) -> error::Result<()> {
         }
         let mut report = patchelf_rs::ops::Report::default();
         for op in &args.ops {
-            patchelf_rs::ops::apply(&mut image, op, &mut report)?;
+            patchelf_rs::ops::apply(&mut image, op, force_rpath, &mut report)?;
         }
         for line in report.lines {
             println!("{line}");

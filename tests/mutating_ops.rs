@@ -174,3 +174,48 @@ fn set_rpath_grows_and_stays_loadable() {
         "patched binary failed to run"
     );
 }
+
+#[test]
+fn add_rpath_appends_to_existing() {
+    let Some(reference) = guard() else { return };
+    let src = sample("exe-dyn-le");
+    let before = out(&reference, "--print-rpath", &src);
+    let before = before.trim();
+
+    let bin = copy("exe-dyn-le", "addrpath");
+    patch(&bin, &["--add-rpath", "/new/dir/here"]);
+    assert_eq!(
+        out(&reference, "--print-rpath", &bin).trim(),
+        format!("{before}:/new/dir/here")
+    );
+    assert!(Command::new(&bin).status().unwrap().success());
+}
+
+#[test]
+fn force_rpath_uses_dt_rpath_tag() {
+    let Some(reference) = guard() else { return };
+    let bin = copy("exe-dyn-le", "forcerpath");
+    patch(
+        &bin,
+        &["--force-rpath", "--set-rpath", "/forced/path/longlonglong"],
+    );
+
+    assert_eq!(
+        out(&reference, "--print-rpath", &bin).trim(),
+        "/forced/path/longlonglong"
+    );
+    let img = patchelf_rs::parser::parse(&std::fs::read(&bin).unwrap()).unwrap();
+    assert!(
+        img.dynamic
+            .iter()
+            .any(|d| d.tag == patchelf_rs::ir::dt::RPATH),
+        "expected DT_RPATH after --force-rpath"
+    );
+    assert!(
+        !img.dynamic
+            .iter()
+            .any(|d| d.tag == patchelf_rs::ir::dt::RUNPATH),
+        "DT_RUNPATH should have been converted"
+    );
+    assert!(Command::new(&bin).status().unwrap().success());
+}

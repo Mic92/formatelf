@@ -17,7 +17,14 @@ impl Report {
     }
 }
 
-pub fn apply(image: &mut ElfImage, op: &Operation, report: &mut Report) -> Result<()> {
+/// `force_rpath` is a global modifier (patchelf's --force-rpath): it selects
+/// DT_RPATH over DT_RUNPATH for the rpath-mutating operations.
+pub fn apply(
+    image: &mut ElfImage,
+    op: &Operation,
+    force_rpath: bool,
+    report: &mut Report,
+) -> Result<()> {
     match op {
         Operation::PrintInterpreter => report.push(interpreter(image)?),
         Operation::PrintOsAbi => report.push(os_abi_name(image.ehdr.os_abi)),
@@ -34,7 +41,8 @@ pub fn apply(image: &mut ElfImage, op: &Operation, report: &mut Report) -> Resul
         }
         Operation::PrintExecstack => report.push(format!("execstack: {}", execstack(image))),
         Operation::RemoveRpath => remove_rpath(image),
-        Operation::SetRpath(path) => set_rpath(image, path, false)?,
+        Operation::SetRpath(path) => modify_rpath(image, path, force_rpath)?,
+        Operation::AddRpath(path) => add_rpath(image, path, force_rpath)?,
         Operation::ForceRpath => {}
         Operation::SetInterpreter(p) => set_interpreter(image, p)?,
         Operation::SetSoname(name) => set_soname(image, name)?,
@@ -54,14 +62,23 @@ fn remove_rpath(image: &mut ElfImage) {
         .retain(|d| d.tag != dt::RPATH && d.tag != dt::RUNPATH);
 }
 
+/// Append `path` to the current rpath (colon-joined), then set it.
+fn add_rpath(image: &mut ElfImage, path: &str, force: bool) -> Result<()> {
+    let cur = rpath(image)?;
+    let combined = if cur.is_empty() {
+        path.to_string()
+    } else {
+        format!("{cur}:{path}")
+    };
+    modify_rpath(image, &combined, force)
+}
+
 /// Set DT_RUNPATH (or DT_RPATH when `force`). Reuses the existing string slot
 /// when the new value fits, otherwise appends to .dynstr; adds the dynamic
 /// entry when absent. Growth is resolved later by the layout engine.
-fn set_rpath(image: &mut ElfImage, new: &str, force: bool) -> Result<()> {
+fn modify_rpath(image: &mut ElfImage, new: &str, force: bool) -> Result<()> {
     require_dynamic(image)?;
-    let dynstr_idx = image
-        .find_section(".dynstr")
-        .ok_or_else(|| Error::Missing("cannot find section .dynstr".into()))?;
+    let dynstr_idx = dynstr_section(image)?;
 
     let existing: Vec<usize> = image
         .dynamic
@@ -71,6 +88,18 @@ fn set_rpath(image: &mut ElfImage, new: &str, force: bool) -> Result<()> {
         .filter(|(_, d)| d.tag == dt::RPATH || d.tag == dt::RUNPATH)
         .map(|(i, _)| i)
         .collect();
+
+    // Match patchelf's tag policy: prefer DT_RUNPATH, unless --force-rpath.
+    let has_runpath = existing
+        .iter()
+        .any(|&i| image.dynamic[i].tag == dt::RUNPATH);
+    let convert_to = if force { dt::RPATH } else { dt::RUNPATH };
+    let needs_convert = if force { has_runpath } else { !has_runpath };
+    if needs_convert {
+        for &i in &existing {
+            image.dynamic[i].tag = convert_to;
+        }
+    }
 
     // Try an in-place overwrite when the new path fits the current slot.
     if let Some(&first) = existing.first() {
@@ -88,8 +117,13 @@ fn set_rpath(image: &mut ElfImage, new: &str, force: bool) -> Result<()> {
 
     let str_off = dynstr_append(&mut image.section_data[dynstr_idx], new);
     if existing.is_empty() {
-        let tag = if force { dt::RPATH } else { dt::RUNPATH };
-        image.dynamic.insert(0, ir::DynEntry { tag, val: str_off });
+        image.dynamic.insert(
+            0,
+            ir::DynEntry {
+                tag: convert_to,
+                val: str_off,
+            },
+        );
     } else {
         for &i in &existing {
             image.dynamic[i].val = str_off;
