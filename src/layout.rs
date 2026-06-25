@@ -19,39 +19,47 @@ fn round_up(v: u64, align: u64) -> u64 {
     }
 }
 
-/// Re-encode the dynamic array into its section data. Shrinking keeps the
-/// original section size (freed tail zeroed, so the trailing DT_NULL still
-/// terminates); growth enlarges the section data so the layout step relocates
-/// it like any other grown section.
+fn dyn_idx(image: &ElfImage) -> Option<usize> {
+    image.shdrs.iter().position(|s| s.sh_type == sht::DYNAMIC)
+}
+
+/// Final on-disk size of a section. The `.dynamic` section is driven by the
+/// `dynamic` array (re-encoded later by `sync_dynamic`); shrinking it keeps the
+/// original size with a zeroed tail, so only genuine growth counts here.
+fn section_len(image: &ElfImage, i: usize) -> u64 {
+    if Some(i) == dyn_idx(image) {
+        let encoded = image.dynamic.len() as u64 * codec::dyn_size(image.enc.class) as u64;
+        encoded.max(image.shdrs[i].size)
+    } else {
+        image.section_data[i].len() as u64
+    }
+}
+
+/// Re-encode the dynamic array into its section data, zero-padding to the
+/// header size so a shrunk array's trailing DT_NULL still terminates. Called
+/// once, after address fixups, so it captures the final entry values.
 fn sync_dynamic(image: &mut ElfImage) {
-    let Some(idx) = image.shdrs.iter().position(|s| s.sh_type == sht::DYNAMIC) else {
-        return;
-    };
+    let Some(idx) = dyn_idx(image) else { return };
     let mut bytes = Vec::new();
     for d in &image.dynamic {
         codec::write_dyn(image.enc, d, &mut bytes);
     }
-    let orig = image.shdrs[idx].size as usize;
-    if bytes.len() < orig {
-        bytes.resize(orig, 0);
-    }
+    bytes.resize((image.shdrs[idx].size as usize).max(bytes.len()), 0);
     image.section_data[idx] = bytes;
 }
 
 fn grown_sections(image: &ElfImage) -> Vec<usize> {
     (0..image.shdrs.len())
         .filter(|&i| {
-            let s = &image.shdrs[i];
-            s.sh_type != sht::NOBITS && image.section_data[i].len() as u64 != s.size
+            image.shdrs[i].sh_type != sht::NOBITS && section_len(image, i) != image.shdrs[i].size
         })
         .collect()
 }
 
 pub fn finalize(image: &mut ElfImage, original: &[u8], page_size: Option<u64>) -> Result<Vec<u8>> {
-    sync_dynamic(image);
-
     let grown = grown_sections(image);
     if grown.is_empty() {
+        sync_dynamic(image);
         return serialize::write(image, original.to_vec());
     }
     if image.ehdr.e_type != et::DYN {
@@ -113,7 +121,7 @@ fn relayout(
 
     let mut needed = pht_size + sht_size;
     for &i in &grown {
-        needed += round_up(image.section_data[i].len() as u64, sec_align);
+        needed += round_up(section_len(image, i), sec_align);
     }
 
     let start_off = round_up(original.len() as u64, align);
@@ -126,14 +134,13 @@ fn relayout(
     image.ehdr.shoff = start_off + pht_size;
     let mut cur = start_off + pht_size + sht_size;
     for &i in &grown {
-        let len = image.section_data[i].len() as u64;
+        let len = section_len(image, i);
         image.shdrs[i].offset = cur;
         image.shdrs[i].addr = start_page + (cur - start_off);
         image.shdrs[i].size = len;
         cur += round_up(len, sec_align);
     }
 
-    // New PT_LOAD covering the appended region.
     image.phdrs.push(Phdr {
         p_type: pt::LOAD,
         flags: pf::R | pf::W,
@@ -147,6 +154,7 @@ fn relayout(
 
     sync_segments(image);
     fixup_dynamic_addrs(image);
+    sync_dynamic(image);
 
     constraints::validate(image)?;
     serialize::write(image, buf)

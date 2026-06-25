@@ -50,6 +50,22 @@ fn set_rpath_grows_and_stays_loadable() {
     assert_eq!(out(&reference, "--print-needed", &copy), needed);
     assert_eq!(out(&reference, "--print-interpreter", &copy), interp);
 
+    // The loader resolves DT_RUNPATH via DT_STRTAB's address, not the section
+    // header, so DT_STRTAB must point at the relocated .dynstr.
+    let patched = std::fs::read(&copy).unwrap();
+    let img = patchelf_rs::parser::parse(&patched).unwrap();
+    let strtab_addr = img
+        .dynamic
+        .iter()
+        .find(|d| d.tag == patchelf_rs::ir::dt::STRTAB)
+        .unwrap()
+        .val;
+    let dynstr_addr = img.shdrs[img.find_section(".dynstr").unwrap()].addr;
+    assert_eq!(
+        strtab_addr, dynstr_addr,
+        "DT_STRTAB not synced to moved .dynstr"
+    );
+
     // The relocated program headers and PT_LOAD must still be loadable.
     let status = Command::new(&copy).status().unwrap();
     assert!(status.success(), "patched binary failed to run");

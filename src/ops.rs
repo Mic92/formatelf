@@ -81,11 +81,7 @@ fn set_rpath(image: &mut ElfImage, new: &str, force: bool) -> Result<()> {
         }
     }
 
-    // Append the new string at the end of .dynstr.
-    let str_off = image.section_data[dynstr_idx].len() as u64;
-    image.section_data[dynstr_idx].extend_from_slice(new.as_bytes());
-    image.section_data[dynstr_idx].push(0);
-
+    let str_off = dynstr_append(&mut image.section_data[dynstr_idx], new);
     if existing.is_empty() {
         let tag = if force { dt::RPATH } else { dt::RUNPATH };
         image.dynamic.insert(0, ir::DynEntry { tag, val: str_off });
@@ -95,6 +91,14 @@ fn set_rpath(image: &mut ElfImage, new: &str, force: bool) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Append a NUL-terminated string to a string table, returning its offset.
+fn dynstr_append(buf: &mut Vec<u8>, s: &str) -> u64 {
+    let off = buf.len() as u64;
+    buf.extend_from_slice(s.as_bytes());
+    buf.push(0);
+    off
 }
 
 fn require_dynamic(image: &ElfImage) -> Result<()> {
