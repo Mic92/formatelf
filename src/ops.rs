@@ -61,6 +61,7 @@ pub fn apply(
         Operation::AddDebugTag => add_debug_tag(image)?,
         Operation::ClearExecstack => modify_execstack(image, false)?,
         Operation::SetExecstack => modify_execstack(image, true)?,
+        Operation::ClearSymbolVersion(sym) => clear_symbol_version(image, sym)?,
         other => return Err(Error::Unsupported(format!("{other:?}"))),
     }
     Ok(())
@@ -292,6 +293,51 @@ fn replace_needed(image: &mut ElfImage, old: &str, new: &str) -> Result<()> {
     let off = dynstr_append(&mut image.section_data[dynstr_idx], new);
     for i in matches {
         image.dynamic[i].val = off;
+    }
+    Ok(())
+}
+
+/// Set the `.gnu.version` entry to 1 (VER_NDX_GLOBAL) for every dynamic symbol
+/// named `sym`. In-place: the versym array keeps its size.
+fn clear_symbol_version(image: &mut ElfImage, sym: &str) -> Result<()> {
+    let dynsym = image
+        .find_section(".dynsym")
+        .ok_or_else(|| Error::Missing("cannot find section .dynsym".into()))?;
+    let dynstr = dynstr_section(image)?;
+    let versym = image
+        .find_section(".gnu.version")
+        .ok_or_else(|| Error::Missing("cannot find section .gnu.version".into()))?;
+
+    let big = image.enc.endian == ir::Endian::Big;
+    let sym_size = if image.enc.class == ir::Class::Elf64 {
+        24
+    } else {
+        16
+    };
+    let count = image.section_data[dynsym].len() / sym_size;
+    if image.section_data[versym].len() < count * 2 {
+        return Err(Error::Parse("versym smaller than dynsym".into()));
+    }
+    let rd_u32 = |b: &[u8]| {
+        let a = [b[0], b[1], b[2], b[3]];
+        if big {
+            u32::from_be_bytes(a)
+        } else {
+            u32::from_le_bytes(a)
+        }
+    };
+    let global = if big {
+        1u16.to_be_bytes()
+    } else {
+        1u16.to_le_bytes()
+    };
+
+    // st_name (u32) is the first field of both Elf32_Sym and Elf64_Sym.
+    for i in 0..count {
+        let st_name = rd_u32(&image.section_data[dynsym][i * sym_size..]);
+        if ir::cstr(&image.section_data[dynstr], st_name) == Some(sym) {
+            image.section_data[versym][i * 2..i * 2 + 2].copy_from_slice(&global);
+        }
     }
     Ok(())
 }

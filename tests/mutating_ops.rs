@@ -338,3 +338,26 @@ fn shrink_rpath_drops_useless_dirs() {
     // Not executed: the placeholder libc in the kept dir would shadow the real
     // one at load time. Shrink correctness is checked via the readback above.
 }
+
+#[test]
+fn clear_symbol_version_matches_reference() {
+    let Some(reference) = guard() else { return };
+    let bin_ours = copy("exe-dyn-le", "clearver-ours");
+    let bin_ref = copy("exe-dyn-le", "clearver-ref");
+
+    patch(&bin_ours, &["--clear-symbol-version", "abort"]);
+    let r = Command::new(&reference)
+        .args(["--clear-symbol-version", "abort"])
+        .arg(&bin_ref)
+        .status()
+        .unwrap();
+    assert!(r.success());
+
+    // The .gnu.version arrays must match byte-for-byte.
+    let a = patchelf_rs::parser::parse(&std::fs::read(&bin_ours).unwrap()).unwrap();
+    let b = patchelf_rs::parser::parse(&std::fs::read(&bin_ref).unwrap()).unwrap();
+    let ai = a.find_section(".gnu.version").unwrap();
+    let bi = b.find_section(".gnu.version").unwrap();
+    assert_eq!(a.section_data[ai], b.section_data[bi]);
+    assert!(Command::new(&bin_ours).status().unwrap().success());
+}
