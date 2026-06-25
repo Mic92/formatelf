@@ -62,7 +62,14 @@ pub fn apply(
         Operation::ClearExecstack => modify_execstack(image, false)?,
         Operation::SetExecstack => modify_execstack(image, true)?,
         Operation::ClearSymbolVersion(sym) => clear_symbol_version(image, sym)?,
-        other => return Err(Error::Unsupported(format!("{other:?}"))),
+        // Needs full GNU/SysV hash-table rebuild and reloc index remapping.
+        Operation::RenameDynamicSymbols(_) => {
+            return Err(Error::Unsupported("--rename-dynamic-symbols".into()))
+        }
+        // patchelf-specific resolution-cache note, not implemented.
+        Operation::BuildResolutionCache => {
+            return Err(Error::Unsupported("--build-resolution-cache".into()))
+        }
     }
     Ok(())
 }
@@ -86,18 +93,20 @@ fn add_rpath(image: &mut ElfImage, path: &str, force: bool) -> Result<()> {
     modify_rpath(image, &combined, force)
 }
 
-/// Read an ELF file's e_machine, or None if it isn't a readable ELF.
+/// Read an ELF file's e_machine, or None if it isn't a readable ELF. Reads only
+/// the leading header bytes so probing large shared libraries stays cheap.
 fn elf_machine(path: &std::path::Path) -> Option<u16> {
-    let data = std::fs::read(path).ok()?;
-    if data.len() < 20 || &data[..4] != b"\x7fELF" {
+    use std::io::Read;
+    let mut head = [0u8; 20];
+    std::fs::File::open(path).ok()?.read_exact(&mut head).ok()?;
+    if &head[..4] != b"\x7fELF" {
         return None;
     }
-    let le = data[5] == 1; // EI_DATA: 1 = little-endian
-    let m = &data[18..20];
-    Some(if le {
-        u16::from_le_bytes([m[0], m[1]])
+    let m = [head[18], head[19]];
+    Some(if head[5] == 1 {
+        u16::from_le_bytes(m) // EI_DATA: 1 = little-endian
     } else {
-        u16::from_be_bytes([m[0], m[1]])
+        u16::from_be_bytes(m)
     })
 }
 
