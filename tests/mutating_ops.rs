@@ -124,3 +124,53 @@ fn replace_needed_changes_entry() {
         .any(|l| l == "libreplacement-longer-name.so.3"));
     assert!(!after.lines().any(|l| l == first));
 }
+
+#[test]
+fn remove_rpath_clears_runpath_keeps_needed() {
+    let Some(reference) = guard() else { return };
+    let src = sample("exe-dyn-le");
+    assert_eq!(
+        out(&reference, "--print-rpath", &src).trim(),
+        "/opt/custom/lib"
+    );
+    let needed = out(&reference, "--print-needed", &src);
+
+    let bin = copy("exe-dyn-le", "norpath");
+    patch(&bin, &["--remove-rpath"]);
+    assert_eq!(out(&reference, "--print-rpath", &bin).trim(), "");
+    assert_eq!(out(&reference, "--print-needed", &bin), needed);
+}
+
+#[test]
+fn set_rpath_grows_and_stays_loadable() {
+    let Some(reference) = guard() else { return };
+    let src = sample("exe-dyn-le");
+    assert!(Command::new(&src).status().unwrap().success());
+    let needed = out(&reference, "--print-needed", &src);
+    let interp = out(&reference, "--print-interpreter", &src);
+
+    let bin = copy("exe-dyn-le", "rpath");
+    let long = "/a/very/long/custom/runpath/that/will/not/fit/in/place/lib";
+    patch(&bin, &["--set-rpath", long]);
+
+    assert_eq!(out(&reference, "--print-rpath", &bin).trim(), long);
+    assert_eq!(out(&reference, "--print-needed", &bin), needed);
+    assert_eq!(out(&reference, "--print-interpreter", &bin), interp);
+
+    // The loader resolves DT_RUNPATH via DT_STRTAB's address, not the section
+    // header, so DT_STRTAB must point at the relocated .dynstr.
+    let img = patchelf_rs::parser::parse(&std::fs::read(&bin).unwrap()).unwrap();
+    let strtab = img
+        .dynamic
+        .iter()
+        .find(|d| d.tag == patchelf_rs::ir::dt::STRTAB)
+        .unwrap()
+        .val;
+    let dynstr = img.shdrs[img.find_section(".dynstr").unwrap()].addr;
+    assert_eq!(strtab, dynstr, "DT_STRTAB not synced to moved .dynstr");
+
+    assert!(
+        Command::new(&bin).status().unwrap().success(),
+        "patched binary failed to run"
+    );
+}
