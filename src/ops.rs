@@ -36,6 +36,7 @@ pub fn apply(image: &mut ElfImage, op: &Operation, report: &mut Report) -> Resul
         Operation::RemoveRpath => remove_rpath(image),
         Operation::SetRpath(path) => set_rpath(image, path, false)?,
         Operation::ForceRpath => {}
+        Operation::SetInterpreter(p) => set_interpreter(image, p)?,
         other => return Err(Error::Unsupported(format!("{other:?}"))),
     }
     Ok(())
@@ -99,6 +100,16 @@ fn dynstr_append(buf: &mut Vec<u8>, s: &str) -> u64 {
     buf.extend_from_slice(s.as_bytes());
     buf.push(0);
     off
+}
+
+fn set_interpreter(image: &mut ElfImage, new: &str) -> Result<()> {
+    let idx = image
+        .find_section(".interp")
+        .ok_or_else(|| Error::Missing("cannot find section .interp".into()))?;
+    let mut bytes = new.as_bytes().to_vec();
+    bytes.push(0);
+    image.section_data[idx] = bytes;
+    Ok(())
 }
 
 fn require_dynamic(image: &ElfImage) -> Result<()> {
