@@ -358,3 +358,37 @@ fn clear_symbol_version_matches_reference() {
     assert_eq!(a.section_data[ai], b.section_data[bi]);
     assert!(Command::new(&bin_ours).status().unwrap().success());
 }
+
+#[test]
+fn print_needed_works_without_section_headers() {
+    if !fixtures::zig_available() {
+        return;
+    }
+    // Strip the section header table (zero e_shoff/e_shnum/e_shstrndx) from an
+    // ELF64 LE shared object; the dynamic info must still be read from segments.
+    let mut data = std::fs::read(sample("so-aarch64-le")).unwrap();
+    data[0x28..0x30].fill(0); // e_shoff
+    data[0x3c..0x3e].fill(0); // e_shnum
+    data[0x3e..0x40].fill(0); // e_shstrndx
+    let bin = Path::new(env!("CARGO_TARGET_TMPDIR")).join("no-shdr.so");
+    std::fs::write(&bin, &data).unwrap();
+
+    let img = patchelf_rs::parser::parse(&std::fs::read(&bin).unwrap()).unwrap();
+    assert!(img.shdrs.is_empty(), "section headers should be gone");
+
+    let out = Command::new(env!("CARGO_BIN_EXE_patchelf"))
+        .args(["--print-needed"])
+        .arg(&bin)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let needed = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        needed.lines().any(|n| n.starts_with("libc")),
+        "got {needed:?}"
+    );
+}

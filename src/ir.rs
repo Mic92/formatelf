@@ -137,6 +137,10 @@ pub struct ElfImage {
     /// Parallel to `shdrs`.
     pub section_data: Vec<Vec<u8>>,
     pub dynamic: Vec<DynEntry>,
+    /// Dyn-string-table bytes recovered from PT_DYNAMIC/PT_LOAD when there is no
+    /// `.dynstr` section (stripped section headers). Read-only fallback; the
+    /// mutating ops still require real sections, as patchelf does.
+    pub dynstr_fallback: Option<Vec<u8>>,
 }
 
 /// Read a NUL-terminated string starting at `off` in a string table.
@@ -156,18 +160,25 @@ impl ElfImage {
         (0..self.shdrs.len()).find(|&i| self.section_name(i) == Some(name))
     }
 
+    /// Dynamic info is keyed off the parsed array (segment-derived), not the
+    /// presence of a section header, so stripped binaries still count.
     pub fn has_dynamic(&self) -> bool {
-        self.shdrs.iter().any(|s| s.sh_type == sht::DYNAMIC)
+        !self.dynamic.is_empty()
     }
 
-    /// Bytes of the string table linked from the `.dynamic` section.
+    /// Bytes of the dynamic string table: from the `.dynamic`-linked section
+    /// when section headers exist, otherwise the segment-recovered fallback.
     pub fn dynstr(&self) -> Option<&[u8]> {
-        let dyn_idx = self.shdrs.iter().position(|s| s.sh_type == sht::DYNAMIC)?;
-        let link = self.shdrs[dyn_idx].link as usize;
-        let s = self.shdrs.get(link)?;
-        if s.sh_type != sht::STRTAB {
-            return None;
+        if let Some(dyn_idx) = self.shdrs.iter().position(|s| s.sh_type == sht::DYNAMIC) {
+            let link = self.shdrs[dyn_idx].link as usize;
+            if self
+                .shdrs
+                .get(link)
+                .is_some_and(|s| s.sh_type == sht::STRTAB)
+            {
+                return self.section_data.get(link).map(Vec::as_slice);
+            }
         }
-        self.section_data.get(link).map(Vec::as_slice)
+        self.dynstr_fallback.as_deref()
     }
 }

@@ -4,7 +4,7 @@
 
 use crate::codec;
 use crate::error::{Error, Result};
-use crate::ir::{DynEntry, ElfImage, Encoding, Shdr};
+use crate::ir::{dt, pt, DynEntry, ElfImage, Encoding, Phdr, Shdr};
 
 const SHT_NOBITS: u32 = 8;
 const SHT_DYNAMIC: u32 = 6;
@@ -45,7 +45,8 @@ pub fn parse(data: &[u8]) -> Result<ElfImage> {
         }
     }
 
-    let dynamic = read_dynamic(data, enc, &shdrs)?;
+    let dynamic = read_dynamic(data, enc, &shdrs, &phdrs)?;
+    let dynstr_fallback = recover_dynstr(data, &phdrs, &shdrs, &dynamic);
 
     Ok(ElfImage {
         enc,
@@ -54,7 +55,52 @@ pub fn parse(data: &[u8]) -> Result<ElfImage> {
         shdrs,
         section_data,
         dynamic,
+        dynstr_fallback,
     })
+}
+
+/// Decode a dynamic array of `filesz` bytes starting at `off`, stopping at the
+/// terminating DT_NULL.
+fn read_dyn_array(data: &[u8], enc: Encoding, off: u64, filesz: u64) -> Result<Vec<DynEntry>> {
+    let dsize = codec::dyn_size(enc.class) as u64;
+    let bytes = slice(data, off, filesz - filesz % dsize, "dynamic")?;
+    let mut out = Vec::new();
+    for chunk in bytes.chunks_exact(dsize as usize) {
+        let entry = codec::read_dyn(enc, chunk)?;
+        let done = entry.tag == 0; // DT_NULL terminates the array
+        out.push(entry);
+        if done {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+/// When there is no `.dynstr` section (stripped section headers) but the
+/// dynamic array is present, recover the string-table bytes by mapping
+/// DT_STRTAB's virtual address through the PT_LOAD segments.
+fn recover_dynstr(
+    data: &[u8],
+    phdrs: &[Phdr],
+    shdrs: &[Shdr],
+    dynamic: &[DynEntry],
+) -> Option<Vec<u8>> {
+    let has_section = shdrs.iter().any(|s| s.sh_type == SHT_DYNAMIC);
+    if has_section || dynamic.is_empty() {
+        return None;
+    }
+    let strtab = dynamic.iter().find(|d| d.tag == dt::STRTAB)?.val;
+    let strsz = dynamic.iter().find(|d| d.tag == dt::STRSZ)?.val;
+    let off = vaddr_to_off(phdrs, strtab)?;
+    slice(data, off, strsz, "dynstr").ok().map(<[u8]>::to_vec)
+}
+
+fn vaddr_to_off(phdrs: &[Phdr], vaddr: u64) -> Option<u64> {
+    phdrs
+        .iter()
+        .filter(|p| p.p_type == pt::LOAD)
+        .find(|p| vaddr >= p.vaddr && vaddr < p.vaddr + p.filesz)
+        .map(|p| p.offset + (vaddr - p.vaddr))
 }
 
 /// Resolve the PN_XNUM / SHN_XINDEX escapes. When the 16-bit header fields
@@ -97,23 +143,22 @@ fn resolve_counts(
     Ok((phnum, shnum))
 }
 
-fn read_dynamic(data: &[u8], enc: Encoding, shdrs: &[Shdr]) -> Result<Vec<DynEntry>> {
-    let Some(dyn_sh) = shdrs.iter().find(|s| s.sh_type == SHT_DYNAMIC) else {
-        return Ok(Vec::new());
-    };
+fn read_dynamic(
+    data: &[u8],
+    enc: Encoding,
+    shdrs: &[Shdr],
+    phdrs: &[Phdr],
+) -> Result<Vec<DynEntry>> {
     let dsize = codec::dyn_size(enc.class) as u64;
-    if dyn_sh.size % dsize != 0 {
-        return Err(Error::Parse("malformed .dynamic".into()));
-    }
-    let bytes = slice(data, dyn_sh.offset, dyn_sh.size, "dynamic")?;
-    let mut out = Vec::new();
-    for chunk in bytes.chunks_exact(dsize as usize) {
-        let entry = codec::read_dyn(enc, chunk)?;
-        let done = entry.tag == 0; // DT_NULL terminates the array
-        out.push(entry);
-        if done {
-            break;
+    if let Some(dyn_sh) = shdrs.iter().find(|s| s.sh_type == SHT_DYNAMIC) {
+        if dyn_sh.size % dsize != 0 {
+            return Err(Error::Parse("malformed .dynamic".into()));
         }
+        return read_dyn_array(data, enc, dyn_sh.offset, dyn_sh.size);
     }
-    Ok(out)
+    // Stripped section headers: fall back to the PT_DYNAMIC segment.
+    if let Some(p) = phdrs.iter().find(|p| p.p_type == pt::DYNAMIC) {
+        return read_dyn_array(data, enc, p.offset, p.filesz);
+    }
+    Ok(Vec::new())
 }
