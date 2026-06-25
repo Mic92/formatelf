@@ -38,6 +38,9 @@ pub fn apply(image: &mut ElfImage, op: &Operation, report: &mut Report) -> Resul
         Operation::ForceRpath => {}
         Operation::SetInterpreter(p) => set_interpreter(image, p)?,
         Operation::SetSoname(name) => set_soname(image, name)?,
+        Operation::AddNeeded(lib) => add_needed(image, lib)?,
+        Operation::RemoveNeeded(lib) => remove_needed(image, lib)?,
+        Operation::ReplaceNeeded { old, new } => replace_needed(image, old, new)?,
         other => return Err(Error::Unsupported(format!("{other:?}"))),
     }
     Ok(())
@@ -136,6 +139,57 @@ fn set_soname(image: &mut ElfImage, name: &str) -> Result<()> {
                 val: off,
             },
         ),
+    }
+    Ok(())
+}
+
+fn add_needed(image: &mut ElfImage, lib: &str) -> Result<()> {
+    require_dynamic(image)?;
+    let dynstr_idx = dynstr_section(image)?;
+    let off = dynstr_append(&mut image.section_data[dynstr_idx], lib);
+    image.dynamic.insert(
+        0,
+        ir::DynEntry {
+            tag: dt::NEEDED,
+            val: off,
+        },
+    );
+    Ok(())
+}
+
+fn remove_needed(image: &mut ElfImage, lib: &str) -> Result<()> {
+    require_dynamic(image)?;
+    let dynstr_idx = dynstr_section(image)?;
+    let targets: Vec<u64> = image
+        .dynamic
+        .iter()
+        .filter(|d| d.tag == dt::NEEDED)
+        .filter(|d| ir::cstr(&image.section_data[dynstr_idx], d.val as u32) == Some(lib))
+        .map(|d| d.val)
+        .collect();
+    image
+        .dynamic
+        .retain(|d| d.tag != dt::NEEDED || !targets.contains(&d.val));
+    Ok(())
+}
+
+fn replace_needed(image: &mut ElfImage, old: &str, new: &str) -> Result<()> {
+    require_dynamic(image)?;
+    let dynstr_idx = dynstr_section(image)?;
+    let matches: Vec<usize> = image
+        .dynamic
+        .iter()
+        .enumerate()
+        .filter(|(_, d)| d.tag == dt::NEEDED)
+        .filter(|(_, d)| ir::cstr(&image.section_data[dynstr_idx], d.val as u32) == Some(old))
+        .map(|(i, _)| i)
+        .collect();
+    if matches.is_empty() {
+        return Ok(());
+    }
+    let off = dynstr_append(&mut image.section_data[dynstr_idx], new);
+    for i in matches {
+        image.dynamic[i].val = off;
     }
     Ok(())
 }

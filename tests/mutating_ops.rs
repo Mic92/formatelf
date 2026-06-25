@@ -85,3 +85,42 @@ fn set_soname_on_shared_object() {
         "librenamed-with-a-much-longer-name.so.7"
     );
 }
+
+#[test]
+fn add_then_remove_needed_round_trips() {
+    let Some(reference) = guard() else { return };
+    let src = sample("exe-dyn-le");
+    let before = out(&reference, "--print-needed", &src);
+
+    let bin = copy("exe-dyn-le", "needed");
+    patch(&bin, &["--add-needed", "libextra-placeholder.so.9"]);
+    let after_add = out(&reference, "--print-needed", &bin);
+    assert!(
+        after_add.lines().any(|l| l == "libextra-placeholder.so.9"),
+        "added lib missing: {after_add:?}"
+    );
+
+    patch(&bin, &["--remove-needed", "libextra-placeholder.so.9"]);
+    assert_eq!(out(&reference, "--print-needed", &bin), before);
+    // The bogus entry is gone, so the binary loads again.
+    assert!(Command::new(&bin).status().unwrap().success());
+}
+
+#[test]
+fn replace_needed_changes_entry() {
+    let Some(reference) = guard() else { return };
+    let src = sample("exe-dyn-le");
+    let needed = out(&reference, "--print-needed", &src);
+    let first = needed.lines().next().unwrap();
+
+    let bin = copy("exe-dyn-le", "replace");
+    patch(
+        &bin,
+        &["--replace-needed", first, "libreplacement-longer-name.so.3"],
+    );
+    let after = out(&reference, "--print-needed", &bin);
+    assert!(after
+        .lines()
+        .any(|l| l == "libreplacement-longer-name.so.3"));
+    assert!(!after.lines().any(|l| l == first));
+}
