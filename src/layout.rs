@@ -81,7 +81,8 @@ pub fn finalize(
         }
         sync_dynamic(image)?;
         constraints::validate(image)?;
-        return serialize::write(image, original);
+        let total = original.len() as u64;
+        return serialize::write(image, &original, total);
     }
     if debug {
         eprintln!("patchelf: {} section(s) grew; relaying out", grown.len());
@@ -194,8 +195,7 @@ fn relayout(
     let start_off = round_up(region_start.unwrap_or(orig_len).max(min_off), align);
     let region_vaddr = base_vaddr + start_off;
     // +1: older binutils readelf rejects a PT_DYNAMIC as large as the file.
-    let mut buf = original;
-    buf.resize((start_off + needed + 1) as usize, 0);
+    let total = start_off + needed + 1;
 
     // Moving a section to a new address corrupts anything that referenced its
     // old address by value. We only fix DT_* tags, so refuse to relocate a
@@ -247,7 +247,7 @@ fn relayout(
     sync_dynamic(image)?;
 
     constraints::validate(image)?;
-    serialize::write(image, buf)
+    serialize::write(image, &original, total)
 }
 
 /// True if any fixed-stride record in `sec` has its `width`-byte field at
