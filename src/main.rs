@@ -77,8 +77,13 @@ fn run(args: cli::Args) -> error::Result<()> {
             println!("{line}");
         }
         if mutating {
-            let bytes =
-                patchelf_rs::layout::finalize(&mut image, data, args.page_size, args.debug)?;
+            let bytes = patchelf_rs::layout::finalize(
+                &mut image,
+                data,
+                args.page_size,
+                args.debug,
+                args.no_clobber_old_sections,
+            )?;
             let dest = args.output.as_ref().unwrap_or(file);
             std::fs::write(dest, bytes).map_err(|source| Error::Io {
                 path: dest.clone(),

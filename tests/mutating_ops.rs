@@ -515,3 +515,35 @@ fn build_resolution_cache_matches_reference() {
         .iter()
         .any(|p| p.p_type == patchelf_rs::ir::pt::NOTE && p.vaddr == a.shdrs[ai].addr));
 }
+
+#[test]
+fn no_clobber_appends_a_fresh_region() {
+    let Some(_reference) = guard() else { return };
+    let bin = copy("exe-dyn-le", "noclobber");
+    let loads = |p: &Path| {
+        patchelf_rs::parser::parse(&std::fs::read(p).unwrap())
+            .unwrap()
+            .phdrs
+            .iter()
+            .filter(|h| h.p_type == patchelf_rs::ir::pt::LOAD)
+            .count()
+    };
+
+    patch(
+        &bin,
+        &["--set-rpath", "/opt/first/aaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+    );
+    let before = loads(&bin);
+    // With clobbering disabled the prior region is not reused, so a new
+    // PT_LOAD is added rather than reclaimed.
+    patch(
+        &bin,
+        &[
+            "--no-clobber-old-sections",
+            "--set-rpath",
+            "/opt/second/bbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        ],
+    );
+    assert!(loads(&bin) > before, "expected a fresh PT_LOAD");
+    assert!(Command::new(&bin).status().unwrap().success());
+}

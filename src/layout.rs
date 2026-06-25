@@ -68,6 +68,7 @@ pub fn finalize(
     original: Vec<u8>,
     page_size: Option<u64>,
     debug: bool,
+    no_clobber: bool,
 ) -> Result<Vec<u8>> {
     let grown = grown_sections(image);
     if grown.is_empty() {
@@ -81,12 +82,13 @@ pub fn finalize(
     if debug {
         eprintln!("patchelf: {} section(s) grew; relaying out", grown.len());
     }
+    let reclaim = !no_clobber;
     if image.ehdr.e_type != et::DYN && image.ehdr.e_type != et::EXEC {
         return Err(Error::Unsupported(
             "unsupported ELF type for relayout".into(),
         ));
     }
-    relayout(image, original, grown, page_size)
+    relayout(image, original, grown, page_size, reclaim)
 }
 
 fn page_size_for(image: &ElfImage, forced: Option<u64>) -> u64 {
@@ -109,6 +111,7 @@ fn relayout(
     original: Vec<u8>,
     grown: Vec<usize>,
     page_size: Option<u64>,
+    reclaim: bool,
 ) -> Result<Vec<u8>> {
     let sec_align = codec::dyn_size(image.enc.class) as u64; // sizeof(Elf_Off)
     let phdr_size = codec::phdr_size(image.enc.class) as u64;
@@ -120,10 +123,14 @@ fn relayout(
     // fresh one: that segment begins exactly at the relocated PHT
     // (offset == phoff). Everything living in it is laid out anew together with
     // the newly grown sections, so repeated patching reuses the same space.
-    let prior = image
-        .phdrs
-        .iter()
-        .position(|p| p.p_type == pt::LOAD && p.offset == image.ehdr.phoff);
+    let prior = reclaim
+        .then(|| {
+            image
+                .phdrs
+                .iter()
+                .position(|p| p.p_type == pt::LOAD && p.offset == image.ehdr.phoff)
+        })
+        .flatten();
     let region_start = prior.map(|i| image.phdrs[i].offset);
     if let Some(i) = prior {
         image.phdrs.remove(i);
