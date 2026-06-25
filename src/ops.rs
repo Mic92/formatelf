@@ -17,12 +17,18 @@ impl Report {
     }
 }
 
-/// `force_rpath` is a global modifier (patchelf's --force-rpath): it selects
-/// DT_RPATH over DT_RUNPATH for the rpath-mutating operations.
+/// Global modifiers that affect how the rpath operations behave, mirroring
+/// patchelf's --force-rpath and --allowed-rpath-prefixes flags.
+#[derive(Debug, Default)]
+pub struct Modifiers {
+    pub force_rpath: bool,
+    pub allowed_rpath_prefixes: Vec<String>,
+}
+
 pub fn apply(
     image: &mut ElfImage,
     op: &Operation,
-    force_rpath: bool,
+    mods: &Modifiers,
     report: &mut Report,
 ) -> Result<()> {
     match op {
@@ -41,9 +47,10 @@ pub fn apply(
         }
         Operation::PrintExecstack => report.push(format!("execstack: {}", execstack(image))),
         Operation::RemoveRpath => remove_rpath(image),
-        Operation::SetRpath(path) => modify_rpath(image, path, force_rpath)?,
-        Operation::AddRpath(path) => add_rpath(image, path, force_rpath)?,
-        Operation::ForceRpath => {}
+        Operation::SetRpath(path) => modify_rpath(image, path, mods.force_rpath)?,
+        Operation::AddRpath(path) => add_rpath(image, path, mods.force_rpath)?,
+        Operation::ShrinkRpath => shrink_rpath(image, mods)?,
+        Operation::ForceRpath | Operation::AllowedRpathPrefixes(_) => {}
         Operation::SetInterpreter(p) => set_interpreter(image, p)?,
         Operation::SetSoname(name) => set_soname(image, name)?,
         Operation::AddNeeded(lib) => add_needed(image, lib)?,
@@ -76,6 +83,62 @@ fn add_rpath(image: &mut ElfImage, path: &str, force: bool) -> Result<()> {
         format!("{cur}:{path}")
     };
     modify_rpath(image, &combined, force)
+}
+
+/// Read an ELF file's e_machine, or None if it isn't a readable ELF.
+fn elf_machine(path: &std::path::Path) -> Option<u16> {
+    let data = std::fs::read(path).ok()?;
+    if data.len() < 20 || &data[..4] != b"\x7fELF" {
+        return None;
+    }
+    let le = data[5] == 1; // EI_DATA: 1 = little-endian
+    let m = &data[18..20];
+    Some(if le {
+        u16::from_le_bytes([m[0], m[1]])
+    } else {
+        u16::from_be_bytes([m[0], m[1]])
+    })
+}
+
+/// Drop rpath directories that contain none of the needed libraries (matching
+/// the binary's machine type), and any rejected by --allowed-rpath-prefixes.
+/// Non-absolute entries such as $ORIGIN are always kept.
+fn shrink_rpath(image: &mut ElfImage, mods: &Modifiers) -> Result<()> {
+    let cur = rpath(image)?;
+    if cur.is_empty() {
+        return Ok(());
+    }
+    let needed = needed(image)?;
+    let machine = image.ehdr.machine;
+    let mut found = vec![false; needed.len()];
+    let mut kept: Vec<&str> = Vec::new();
+
+    for dir in cur.split(':').filter(|s| !s.is_empty()) {
+        if !dir.starts_with('/') {
+            kept.push(dir);
+            continue;
+        }
+        let allowed = &mods.allowed_rpath_prefixes;
+        if !allowed.is_empty() && !allowed.iter().any(|p| dir.starts_with(p)) {
+            continue;
+        }
+        let mut dir_useful = false;
+        for (j, lib) in needed.iter().enumerate() {
+            if found[j] {
+                continue;
+            }
+            if elf_machine(&std::path::Path::new(dir).join(lib)) == Some(machine) {
+                found[j] = true;
+                dir_useful = true;
+            }
+        }
+        if dir_useful {
+            kept.push(dir);
+        }
+    }
+
+    let new = kept.join(":");
+    modify_rpath(image, &new, mods.force_rpath)
 }
 
 /// Set DT_RUNPATH (or DT_RPATH when `force`). Reuses the existing string slot

@@ -41,10 +41,20 @@ fn run(args: cli::Args) -> error::Result<()> {
     }
 
     let mutating = args.ops.iter().any(|o| !is_read_only(o));
-    let force_rpath = args
-        .ops
-        .iter()
-        .any(|o| matches!(o, cli::Operation::ForceRpath));
+    let mut mods = patchelf_rs::ops::Modifiers::default();
+    for op in &args.ops {
+        match op {
+            cli::Operation::ForceRpath => mods.force_rpath = true,
+            cli::Operation::AllowedRpathPrefixes(s) => {
+                mods.allowed_rpath_prefixes = s
+                    .split(':')
+                    .map(str::to_owned)
+                    .filter(|p| !p.is_empty())
+                    .collect();
+            }
+            _ => {}
+        }
+    }
 
     for file in &args.files {
         let data = std::fs::read(file).map_err(|source| Error::Io {
@@ -58,7 +68,7 @@ fn run(args: cli::Args) -> error::Result<()> {
         }
         let mut report = patchelf_rs::ops::Report::default();
         for op in &args.ops {
-            patchelf_rs::ops::apply(&mut image, op, force_rpath, &mut report)?;
+            patchelf_rs::ops::apply(&mut image, op, &mods, &mut report)?;
         }
         for line in report.lines {
             println!("{line}");

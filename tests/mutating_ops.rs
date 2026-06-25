@@ -306,3 +306,35 @@ fn set_rpath_on_non_pie_executable() {
         "patched ET_EXEC failed to run"
     );
 }
+
+#[test]
+fn shrink_rpath_drops_useless_dirs() {
+    let Some(reference) = guard() else { return };
+    let src = sample("exe-dyn-le");
+    let first_needed = out(&reference, "--print-needed", &src)
+        .lines()
+        .next()
+        .unwrap()
+        .to_owned();
+
+    // A directory that holds one of the needed libs (any matching-machine ELF
+    // works) is kept; an empty directory is dropped.
+    let tmp = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let good = tmp.join("rpath-good");
+    let bad = tmp.join("rpath-bad");
+    std::fs::create_dir_all(&good).unwrap();
+    std::fs::create_dir_all(&bad).unwrap();
+    std::fs::copy(&src, good.join(&first_needed)).unwrap();
+
+    let bin = copy("exe-dyn-le", "shrink");
+    let rpath = format!("{}:{}", good.display(), bad.display());
+    patch(&bin, &["--set-rpath", &rpath]);
+    patch(&bin, &["--shrink-rpath"]);
+
+    assert_eq!(
+        out(&reference, "--print-rpath", &bin).trim(),
+        good.to_str().unwrap()
+    );
+    // Not executed: the placeholder libc in the kept dir would shadow the real
+    // one at load time. Shrink correctness is checked via the readback above.
+}
