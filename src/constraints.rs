@@ -22,6 +22,9 @@ pub fn validate(image: &ElfImage) -> Result<()> {
         if p.flags & pf::W != 0 && p.flags & pf::X != 0 {
             return Err(fail("PT_LOAD is both writable and executable"));
         }
+        if p.filesz > p.memsz {
+            return Err(fail("PT_LOAD file size exceeds memory size"));
+        }
     }
 
     // PT_LOAD virtual address ranges must not overlap.
@@ -80,6 +83,19 @@ fn dynamic_consistency(image: &ElfImage) -> Result<()> {
         }
         if dval(dt::STRSZ).is_some_and(|v| v > s.size) {
             return Err(fail("DT_STRSZ exceeds the .dynstr section size"));
+        }
+    }
+
+    // String-valued tags hold byte offsets into the table; a bad .dynstr-append
+    // would push one past DT_STRSZ.
+    if let Some(strsz) = dval(dt::STRSZ) {
+        const STR_TAGS: [i64; 4] = [dt::NEEDED, dt::SONAME, dt::RPATH, dt::RUNPATH];
+        if image
+            .dynamic
+            .iter()
+            .any(|d| STR_TAGS.contains(&d.tag) && d.val >= strsz)
+        {
+            return Err(fail("dynamic string offset past DT_STRSZ"));
         }
     }
 
