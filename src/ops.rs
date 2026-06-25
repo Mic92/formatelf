@@ -34,6 +34,8 @@ pub fn apply(image: &mut ElfImage, op: &Operation, report: &mut Report) -> Resul
         }
         Operation::PrintExecstack => report.push(format!("execstack: {}", execstack(image))),
         Operation::RemoveRpath => remove_rpath(image),
+        Operation::SetRpath(path) => set_rpath(image, path, false)?,
+        Operation::ForceRpath => {}
         other => return Err(Error::Unsupported(format!("{other:?}"))),
     }
     Ok(())
@@ -45,6 +47,54 @@ fn remove_rpath(image: &mut ElfImage) {
     image
         .dynamic
         .retain(|d| d.tag != dt::RPATH && d.tag != dt::RUNPATH);
+}
+
+/// Set DT_RUNPATH (or DT_RPATH when `force`). Reuses the existing string slot
+/// when the new value fits, otherwise appends to .dynstr; adds the dynamic
+/// entry when absent. Growth is resolved later by the layout engine.
+fn set_rpath(image: &mut ElfImage, new: &str, force: bool) -> Result<()> {
+    require_dynamic(image)?;
+    let dynstr_idx = image
+        .find_section(".dynstr")
+        .ok_or_else(|| Error::Missing("cannot find section .dynstr".into()))?;
+
+    let existing: Vec<usize> = image
+        .dynamic
+        .iter()
+        .take_while(|d| d.tag != dt::NULL)
+        .enumerate()
+        .filter(|(_, d)| d.tag == dt::RPATH || d.tag == dt::RUNPATH)
+        .map(|(i, _)| i)
+        .collect();
+
+    // Try an in-place overwrite when the new path fits the current slot.
+    if let Some(&first) = existing.first() {
+        let off = image.dynamic[first].val as usize;
+        let old_len = ir::cstr(&image.section_data[dynstr_idx], off as u32)
+            .map(str::len)
+            .unwrap_or(0);
+        if new.len() <= old_len {
+            let buf = &mut image.section_data[dynstr_idx];
+            buf[off..off + new.len()].copy_from_slice(new.as_bytes());
+            buf[off + new.len()] = 0;
+            return Ok(());
+        }
+    }
+
+    // Append the new string at the end of .dynstr.
+    let str_off = image.section_data[dynstr_idx].len() as u64;
+    image.section_data[dynstr_idx].extend_from_slice(new.as_bytes());
+    image.section_data[dynstr_idx].push(0);
+
+    if existing.is_empty() {
+        let tag = if force { dt::RPATH } else { dt::RUNPATH };
+        image.dynamic.insert(0, ir::DynEntry { tag, val: str_off });
+    } else {
+        for &i in &existing {
+            image.dynamic[i].val = str_off;
+        }
+    }
+    Ok(())
 }
 
 fn require_dynamic(image: &ElfImage) -> Result<()> {

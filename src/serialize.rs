@@ -1,7 +1,8 @@
-//! In-place serializer: patch the IR back onto the original file bytes used as
-//! a canvas. Valid only while every region keeps its original size and offset
-//! (identity round-trips and edits that fit in place). Size-changing edits must
-//! first go through the layout engine, which reassigns offsets.
+//! Write the IR onto a byte buffer (a copy of the original file used as a
+//! canvas, optionally pre-grown by the layout engine). Every section's data
+//! must already match its header `sh_size` and `sh_offset`; the layout engine
+//! is responsible for assigning offsets when sizes change. The `.dynamic`
+//! array must be synced into its section data beforehand (see `layout`).
 
 use crate::codec;
 use crate::error::{Error, Result};
@@ -35,8 +36,7 @@ fn put_table<T>(
     Ok(())
 }
 
-pub fn write(image: &ElfImage, original: &[u8]) -> Result<Vec<u8>> {
-    let mut buf = original.to_vec();
+pub fn write(image: &ElfImage, mut buf: Vec<u8>) -> Result<Vec<u8>> {
     let enc = image.enc;
 
     let mut tmp = Vec::new();
@@ -49,11 +49,9 @@ pub fn write(image: &ElfImage, original: &[u8]) -> Result<Vec<u8>> {
     );
     put(&mut buf, 0, &tmp, "ehdr")?;
 
-    let phoff = image.ehdr.phoff;
-    let shoff = image.ehdr.shoff;
     put_table(
         &mut buf,
-        phoff,
+        image.ehdr.phoff,
         enc,
         &image.phdrs,
         codec::write_phdr,
@@ -61,35 +59,20 @@ pub fn write(image: &ElfImage, original: &[u8]) -> Result<Vec<u8>> {
     )?;
     put_table(
         &mut buf,
-        shoff,
+        image.ehdr.shoff,
         enc,
         &image.shdrs,
         codec::write_shdr,
         "shdr",
     )?;
 
-    // The parsed `dynamic` array is authoritative; re-encode it over the bytes
-    // stored for its section so in-place edits to entries take effect.
-    if let Some(idx) = image.shdrs.iter().position(|s| s.sh_type == sht::DYNAMIC) {
-        tmp.clear();
-        for d in &image.dynamic {
-            codec::write_dyn(enc, d, &mut tmp);
-        }
-        if tmp.len() as u64 > image.shdrs[idx].size {
-            return Err(Error::Serialize(
-                "dynamic section grew; needs relayout".into(),
-            ));
-        }
-        put(&mut buf, image.shdrs[idx].offset, &tmp, "dynamic")?;
-    }
-
     for (s, data) in image.shdrs.iter().zip(&image.section_data) {
-        if s.sh_type == sht::NOBITS || s.sh_type == sht::DYNAMIC {
+        if s.sh_type == sht::NOBITS {
             continue;
         }
         if data.len() as u64 != s.size {
             return Err(Error::Serialize(format!(
-                "section size changed ({} != {}); needs relayout",
+                "section size {} != header {}; layout not applied",
                 data.len(),
                 s.size
             )));

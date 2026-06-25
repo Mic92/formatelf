@@ -81,20 +81,40 @@ pub mod et {
     pub const DYN: u16 = 3;
 }
 
+pub mod sht_extra {
+    pub const NOTE: u32 = 7;
+}
+
 pub mod pt {
+    pub const LOAD: u32 = 1;
+    pub const DYNAMIC: u32 = 2;
+    pub const INTERP: u32 = 3;
+    pub const PHDR: u32 = 6;
     pub const GNU_STACK: u32 = 0x6474_e551;
 }
 
 pub mod pf {
     pub const X: u32 = 1;
+    pub const W: u32 = 2;
+    pub const R: u32 = 4;
 }
 
 pub mod dt {
     pub const NULL: i64 = 0;
     pub const NEEDED: i64 = 1;
+    pub const HASH: i64 = 4;
+    pub const STRTAB: i64 = 5;
+    pub const SYMTAB: i64 = 6;
+    pub const RELA: i64 = 7;
+    pub const STRSZ: i64 = 10;
     pub const SONAME: i64 = 14;
     pub const RPATH: i64 = 15;
+    pub const REL: i64 = 17;
+    pub const JMPREL: i64 = 23;
     pub const RUNPATH: i64 = 29;
+    pub const GNU_HASH: i64 = 0x6fff_fef5;
+    pub const VERNEED: i64 = 0x6fff_fffe;
+    pub const VERSYM: i64 = 0x6fff_fff0;
 }
 
 /// Section contents owned separately so ops can grow them without fighting

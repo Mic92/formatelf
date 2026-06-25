@@ -20,7 +20,7 @@ const SPECS: &[(&str, &str, &[&str])] = &[
     (
         "exe-dyn-le",
         "x86_64-linux-gnu",
-        &["-Wl,-rpath,/opt/custom/lib"],
+        &["-fPIE", "-pie", "-Wl,-rpath,/opt/custom/lib"],
     ),
     // Shared object carrying a DT_SONAME.
     (
