@@ -392,3 +392,38 @@ fn print_needed_works_without_section_headers() {
         "got {needed:?}"
     );
 }
+
+#[test]
+fn repeated_patching_reuses_the_appended_region() {
+    let Some(_reference) = guard() else { return };
+    let bin = copy("exe-dyn-le", "coalesce");
+
+    let load_count = |p: &Path| {
+        let img = patchelf_rs::parser::parse(&std::fs::read(p).unwrap()).unwrap();
+        img.phdrs
+            .iter()
+            .filter(|h| h.p_type == patchelf_rs::ir::pt::LOAD)
+            .count()
+    };
+
+    patch(
+        &bin,
+        &["--set-rpath", "/opt/first/aaaaaaaaaaaaaaaaaaaaaaaa/bbbb"],
+    );
+    let after_first = load_count(&bin);
+    for n in 0..4 {
+        patch(
+            &bin,
+            &[
+                "--set-rpath",
+                &format!("/opt/run{n}/cccccccccccccccccccc/dddd"),
+            ],
+        );
+        assert_eq!(
+            load_count(&bin),
+            after_first,
+            "added a PT_LOAD on re-patch {n}"
+        );
+    }
+    assert!(Command::new(&bin).status().unwrap().success());
+}

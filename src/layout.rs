@@ -107,6 +107,29 @@ fn relayout(
     let phdr_size = codec::phdr_size(image.enc.class) as u64;
     let shdr_size = codec::shdr_size(image.enc.class) as u64;
     let ehdr_size = image.ehdr.ehsize as u64;
+    let orig_len = original.len() as u64;
+
+    // Reclaim a region appended by a previous relayout rather than stacking a
+    // fresh one: that segment begins exactly at the relocated PHT
+    // (offset == phoff). Everything living in it is laid out anew together with
+    // the newly grown sections, so repeated patching reuses the same space.
+    let prior = image
+        .phdrs
+        .iter()
+        .position(|p| p.p_type == pt::LOAD && p.offset == image.ehdr.phoff);
+    let region_start = prior.map(|i| image.phdrs[i].offset);
+    if let Some(i) = prior {
+        image.phdrs.remove(i);
+    }
+    // Iterating in index order yields a sorted, duplicate-free list directly.
+    let relocate: Vec<usize> = (0..image.shdrs.len())
+        .filter(|&i| {
+            let s = &image.shdrs[i];
+            s.sh_type != sht::NOBITS
+                && s.size > 0
+                && (grown.contains(&i) || region_start.is_some_and(|r| s.offset >= r))
+        })
+        .collect();
 
     let page = page_size_for(image, page_size);
     let mut align = page;
@@ -132,11 +155,11 @@ fn relayout(
     let sht_size = round_up(image.shdrs.len() as u64 * shdr_size, sec_align);
 
     let mut needed = pht_size + sht_size;
-    for &i in &grown {
+    for &i in &relocate {
         needed += round_up(section_len(image, i), sec_align);
     }
 
-    let start_off = round_up(original.len() as u64, align);
+    let start_off = round_up(region_start.unwrap_or(orig_len), align);
     // +1: older binutils readelf rejects a PT_DYNAMIC as large as the file.
     let mut buf = original;
     buf.resize((start_off + needed + 1) as usize, 0);
@@ -144,18 +167,18 @@ fn relayout(
     // Moving a section to a new address corrupts anything that referenced its
     // old address by value. We only fix DT_* tags, so refuse to relocate a
     // section that relocations or symbols point into.
-    let moved: Vec<(u64, u64)> = grown
+    let moved: Vec<(u64, u64)> = relocate
         .iter()
         .map(|&i| (image.shdrs[i].addr, image.shdrs[i].size))
         .filter(|&(addr, _)| addr != 0)
         .collect();
     assert_no_address_refs(image, &moved)?;
 
-    // Lay out the appended region: PHT, SHT, then the grown sections.
+    // Lay out the appended region: PHT, SHT, then the relocated sections.
     image.ehdr.phoff = start_off;
     image.ehdr.shoff = start_off + pht_size;
     let mut cur = start_off + pht_size + sht_size;
-    for &i in &grown {
+    for &i in &relocate {
         let len = section_len(image, i);
         image.shdrs[i].offset = cur;
         image.shdrs[i].addr = start_page + (cur - start_off);
