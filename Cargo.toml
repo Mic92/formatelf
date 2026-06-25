@@ -1,0 +1,19 @@
+[package]
+name = "patchelf-rs"
+version = "0.0.0"
+edition = "2021"
+description = "Modify the dynamic linker and RPATH of ELF executables"
+license = "MIT"
+
+[[bin]]
+name = "patchelf"
+path = "src/main.rs"
+
+[dependencies]
+object = { version = "0.36", default-features = false, features = ["read_core", "elf", "std"] }
+memmap2 = "0.9"
+thiserror = "2"
+lexopt = "0.3"
+
+[profile.release]
+panic = "abort"
