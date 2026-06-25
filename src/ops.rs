@@ -33,9 +33,18 @@ pub fn apply(image: &mut ElfImage, op: &Operation, report: &mut Report) -> Resul
             }
         }
         Operation::PrintExecstack => report.push(format!("execstack: {}", execstack(image))),
+        Operation::RemoveRpath => remove_rpath(image),
         other => return Err(Error::Unsupported(format!("{other:?}"))),
     }
     Ok(())
+}
+
+/// Drop DT_RPATH/DT_RUNPATH. The trailing DT_NULL is retained, so the encoded
+/// array only shrinks and the edit stays in place.
+fn remove_rpath(image: &mut ElfImage) {
+    image
+        .dynamic
+        .retain(|d| d.tag != dt::RPATH && d.tag != dt::RUNPATH);
 }
 
 fn require_dynamic(image: &ElfImage) -> Result<()> {

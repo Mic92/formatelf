@@ -21,6 +21,9 @@ pub enum Error {
     #[error("{0}")]
     Missing(String),
 
+    #[error("serialize error: {0}")]
+    Serialize(String),
+
     #[error("layout error: {0}")]
     Layout(String),
 

@@ -40,10 +40,7 @@ fn run(args: cli::Args) -> error::Result<()> {
         return Err(Error::Cli("no input files".into()));
     }
 
-    let read_only = args.ops.iter().all(is_read_only);
-    if !read_only {
-        todo!("mutating ops: wire ops -> layout -> constraints -> serialize");
-    }
+    let mutating = args.ops.iter().any(|o| !is_read_only(o));
 
     for file in &args.files {
         let data = std::fs::read(file).map_err(|source| Error::Io {
@@ -61,6 +58,14 @@ fn run(args: cli::Args) -> error::Result<()> {
         }
         for line in report.lines {
             println!("{line}");
+        }
+        if mutating {
+            let bytes = patchelf_rs::serialize::write(&image, &data)?;
+            let dest = args.output.as_ref().unwrap_or(file);
+            std::fs::write(dest, bytes).map_err(|source| Error::Io {
+                path: dest.clone(),
+                source,
+            })?;
         }
     }
     Ok(())
