@@ -67,12 +67,19 @@ pub fn finalize(
     image: &mut ElfImage,
     original: Vec<u8>,
     page_size: Option<u64>,
+    debug: bool,
 ) -> Result<Vec<u8>> {
     let grown = grown_sections(image);
     if grown.is_empty() {
+        if debug {
+            eprintln!("patchelf: no section grew; rewriting in place");
+        }
         sync_dynamic(image)?;
         constraints::validate(image)?;
         return serialize::write(image, original);
+    }
+    if debug {
+        eprintln!("patchelf: {} section(s) grew; relaying out", grown.len());
     }
     if image.ehdr.e_type != et::DYN && image.ehdr.e_type != et::EXEC {
         return Err(Error::Unsupported(

@@ -23,6 +23,7 @@ impl Report {
 pub struct Modifiers {
     pub force_rpath: bool,
     pub allowed_rpath_prefixes: Vec<String>,
+    pub debug: bool,
 }
 
 pub fn apply(
@@ -31,6 +32,9 @@ pub fn apply(
     mods: &Modifiers,
     report: &mut Report,
 ) -> Result<()> {
+    if mods.debug {
+        eprintln!("patchelf: applying {op:?}");
+    }
     match op {
         Operation::PrintInterpreter => report.push(interpreter(image)?),
         Operation::PrintOsAbi => report.push(os_abi_name(image.ehdr.os_abi)),

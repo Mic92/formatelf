@@ -41,7 +41,10 @@ fn run(args: cli::Args) -> error::Result<()> {
     }
 
     let mutating = args.ops.iter().any(|o| !is_read_only(o));
-    let mut mods = patchelf_rs::ops::Modifiers::default();
+    let mut mods = patchelf_rs::ops::Modifiers {
+        debug: args.debug,
+        ..Default::default()
+    };
     for op in &args.ops {
         match op {
             cli::Operation::ForceRpath => mods.force_rpath = true,
@@ -74,7 +77,8 @@ fn run(args: cli::Args) -> error::Result<()> {
             println!("{line}");
         }
         if mutating {
-            let bytes = patchelf_rs::layout::finalize(&mut image, data, args.page_size)?;
+            let bytes =
+                patchelf_rs::layout::finalize(&mut image, data, args.page_size, args.debug)?;
             let dest = args.output.as_ref().unwrap_or(file);
             std::fs::write(dest, bytes).map_err(|source| Error::Io {
                 path: dest.clone(),
