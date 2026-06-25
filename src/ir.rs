@@ -86,6 +86,7 @@ pub mod sht_extra {
 }
 
 pub mod pt {
+    pub const NULL: u32 = 0;
     pub const LOAD: u32 = 1;
     pub const DYNAMIC: u32 = 2;
     pub const INTERP: u32 = 3;
@@ -97,6 +98,10 @@ pub mod pf {
     pub const X: u32 = 1;
     pub const W: u32 = 2;
     pub const R: u32 = 4;
+}
+
+pub mod df1 {
+    pub const NODEFLIB: u64 = 0x800;
 }
 
 pub mod dt {
@@ -111,7 +116,9 @@ pub mod dt {
     pub const RPATH: i64 = 15;
     pub const REL: i64 = 17;
     pub const JMPREL: i64 = 23;
+    pub const DEBUG: i64 = 21;
     pub const RUNPATH: i64 = 29;
+    pub const FLAGS_1: i64 = 0x6fff_fffb;
     pub const GNU_HASH: i64 = 0x6fff_fef5;
     pub const VERNEED: i64 = 0x6fff_fffe;
     pub const VERSYM: i64 = 0x6fff_fff0;

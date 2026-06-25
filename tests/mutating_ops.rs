@@ -219,3 +219,65 @@ fn force_rpath_uses_dt_rpath_tag() {
     );
     assert!(Command::new(&bin).status().unwrap().success());
 }
+
+#[test]
+fn set_os_abi_changes_ident() {
+    let Some(reference) = guard() else { return };
+    let bin = copy("exe-dyn-le", "osabi");
+    patch(&bin, &["--set-os-abi", "freebsd"]);
+    assert_eq!(out(&reference, "--print-os-abi", &bin).trim(), "FreeBSD");
+}
+
+#[test]
+fn execstack_set_then_clear() {
+    let Some(reference) = guard() else { return };
+    let bin = copy("exe-dyn-le", "execstack");
+
+    patch(&bin, &["--set-execstack"]);
+    assert_eq!(
+        out(&reference, "--print-execstack", &bin).trim(),
+        "execstack: X"
+    );
+    assert!(Command::new(&bin).status().unwrap().success());
+
+    patch(&bin, &["--clear-execstack"]);
+    assert_eq!(
+        out(&reference, "--print-execstack", &bin).trim(),
+        "execstack: -"
+    );
+    assert!(Command::new(&bin).status().unwrap().success());
+}
+
+#[test]
+fn no_default_lib_sets_flag() {
+    if !fixtures::zig_available() {
+        eprintln!("skipping: zig not on PATH");
+        return;
+    }
+    let bin = copy("exe-dyn-le", "nodeflib");
+    patch(&bin, &["--no-default-lib"]);
+    let img = patchelf_rs::parser::parse(&std::fs::read(&bin).unwrap()).unwrap();
+    let flags1 = img
+        .dynamic
+        .iter()
+        .find(|d| d.tag == patchelf_rs::ir::dt::FLAGS_1)
+        .expect("DT_FLAGS_1 present");
+    assert_ne!(flags1.val & patchelf_rs::ir::df1::NODEFLIB, 0);
+}
+
+#[test]
+fn add_debug_tag_inserts_entry() {
+    if !fixtures::zig_available() {
+        eprintln!("skipping: zig not on PATH");
+        return;
+    }
+    let bin = copy("exe-dyn-le", "debugtag");
+    patch(&bin, &["--add-debug-tag"]);
+    let img = patchelf_rs::parser::parse(&std::fs::read(&bin).unwrap()).unwrap();
+    assert!(img
+        .dynamic
+        .iter()
+        .any(|d| d.tag == patchelf_rs::ir::dt::DEBUG));
+    // Runs because DT_DEBUG is benign.
+    assert!(Command::new(&bin).status().unwrap().success());
+}

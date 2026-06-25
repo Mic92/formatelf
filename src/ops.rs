@@ -49,6 +49,11 @@ pub fn apply(
         Operation::AddNeeded(lib) => add_needed(image, lib)?,
         Operation::RemoveNeeded(lib) => remove_needed(image, lib)?,
         Operation::ReplaceNeeded { old, new } => replace_needed(image, old, new)?,
+        Operation::SetOsAbi(name) => set_os_abi(image, name)?,
+        Operation::NoDefaultLib => no_default_lib(image)?,
+        Operation::AddDebugTag => add_debug_tag(image)?,
+        Operation::ClearExecstack => modify_execstack(image, false)?,
+        Operation::SetExecstack => modify_execstack(image, true)?,
         other => return Err(Error::Unsupported(format!("{other:?}"))),
     }
     Ok(())
@@ -226,6 +231,85 @@ fn replace_needed(image: &mut ElfImage, old: &str, new: &str) -> Result<()> {
         image.dynamic[i].val = off;
     }
     Ok(())
+}
+
+fn dyn_insert_front(image: &mut ElfImage, tag: i64, val: u64) {
+    image.dynamic.insert(0, ir::DynEntry { tag, val });
+}
+
+fn no_default_lib(image: &mut ElfImage) -> Result<()> {
+    require_dynamic(image)?;
+    match image.dynamic.iter_mut().find(|d| d.tag == dt::FLAGS_1) {
+        Some(d) => d.val |= ir::df1::NODEFLIB,
+        None => dyn_insert_front(image, dt::FLAGS_1, ir::df1::NODEFLIB),
+    }
+    Ok(())
+}
+
+fn add_debug_tag(image: &mut ElfImage) -> Result<()> {
+    require_dynamic(image)?;
+    if !image.dynamic.iter().any(|d| d.tag == dt::DEBUG) {
+        dyn_insert_front(image, dt::DEBUG, 0);
+    }
+    Ok(())
+}
+
+fn set_os_abi(image: &mut ElfImage, name: &str) -> Result<()> {
+    let abi = match name.trim().to_ascii_lowercase().as_str() {
+        "system v" | "system-v" | "sysv" => 0,
+        "hp-ux" => 1,
+        "netbsd" => 2,
+        "linux" | "gnu" => 3,
+        "gnu hurd" | "gnu-hurd" | "hurd" => 4,
+        "solaris" => 6,
+        "aix" => 7,
+        "irix" => 8,
+        "freebsd" => 9,
+        "tru64" => 10,
+        "openbsd" => 12,
+        "openvms" => 13,
+        _ => return Err(Error::Cli("unrecognized OS ABI".into())),
+    };
+    image.ehdr.ident[7] = abi; // EI_OSABI; written verbatim by the codec
+    image.ehdr.os_abi = abi;
+    Ok(())
+}
+
+/// Toggle PF_X on PT_GNU_STACK. Reuses a spare PT_NULL slot when the segment is
+/// absent; adding a brand-new segment would need program-header relocation and
+/// is rejected for now.
+fn modify_execstack(image: &mut ElfImage, set: bool) -> Result<()> {
+    let flip = |flags: u32| {
+        if set {
+            flags | ir::pf::X
+        } else {
+            flags & !ir::pf::X
+        }
+    };
+    if let Some(p) = image
+        .phdrs
+        .iter_mut()
+        .find(|p| p.p_type == ir::pt::GNU_STACK)
+    {
+        p.flags = flip(p.flags);
+        return Ok(());
+    }
+    if let Some(p) = image.phdrs.iter_mut().find(|p| p.p_type == ir::pt::NULL) {
+        *p = ir::Phdr {
+            p_type: ir::pt::GNU_STACK,
+            flags: flip(ir::pf::R | ir::pf::W),
+            offset: 0,
+            vaddr: 0,
+            paddr: 0,
+            filesz: 0,
+            memsz: 0,
+            align: 1,
+        };
+        return Ok(());
+    }
+    Err(Error::Unsupported(
+        "adding a PT_GNU_STACK segment is not yet supported".into(),
+    ))
 }
 
 fn require_dynamic(image: &ElfImage) -> Result<()> {
