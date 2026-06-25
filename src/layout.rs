@@ -207,6 +207,18 @@ fn relayout(
         .collect();
     assert_no_address_refs(image, &moved)?;
 
+    // The ld-cache note moves with the appended region, so remember which
+    // PT_NOTE covers it now (the file is still consistent) to re-anchor it
+    // after the move. Identifying it up front avoids confusing it with
+    // immovable notes like .note.ABI-tag.
+    let ldcache_phdr = image.find_section(".note.nixos.ldcache").and_then(|si| {
+        let off = image.shdrs[si].offset;
+        image
+            .phdrs
+            .iter()
+            .position(|p| p.p_type == pt::NOTE && p.offset == off)
+    });
+
     // Lay out the appended region: PHT, SHT, then the relocated sections.
     image.ehdr.phoff = start_off;
     image.ehdr.shoff = start_off + pht_size;
@@ -230,7 +242,7 @@ fn relayout(
         align,
     });
 
-    sync_segments(image);
+    sync_segments(image, ldcache_phdr);
     fixup_dynamic_addrs(image);
     sync_dynamic(image)?;
 
@@ -310,8 +322,9 @@ fn assert_no_address_refs(image: &ElfImage, ranges: &[(u64, u64)]) -> Result<()>
     Ok(())
 }
 
-/// Re-point PT_PHDR/PT_DYNAMIC/PT_INTERP at their (possibly moved) targets.
-fn sync_segments(image: &mut ElfImage) {
+/// Re-point PT_PHDR/PT_DYNAMIC/PT_INTERP and the ld-cache PT_NOTE at their
+/// (possibly moved) targets.
+fn sync_segments(image: &mut ElfImage, ldcache_phdr: Option<usize>) {
     let phoff = image.ehdr.phoff;
     let pht_bytes = image.phdrs.len() as u64 * codec::phdr_size(image.enc.class) as u64;
     // PT_PHDR's vaddr maps the relocated table; it sits at the region start,
@@ -323,6 +336,9 @@ fn sync_segments(image: &mut ElfImage) {
     };
     let interp = image.find_section(".interp").map(extent);
     let ldcache = image.find_section(".note.nixos.ldcache").map(extent);
+    if let (Some(pi), Some((off, addr, size))) = (ldcache_phdr, ldcache) {
+        set_segment(&mut image.phdrs[pi], off, addr, size);
+    }
     let dynamic = image
         .shdrs
         .iter()
@@ -338,13 +354,6 @@ fn sync_segments(image: &mut ElfImage) {
             }
             pt::DYNAMIC => {
                 if let Some((off, addr, size)) = dynamic {
-                    set_segment(p, off, addr, size);
-                }
-            }
-            // Only the placeholder (filesz 0) we just added, not pre-existing
-            // notes like .note.ABI-tag.
-            pt::NOTE if p.filesz == 0 => {
-                if let Some((off, addr, size)) = ldcache {
                     set_segment(p, off, addr, size);
                 }
             }

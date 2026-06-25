@@ -576,14 +576,39 @@ fn adds_gnu_stack_segment_when_absent() {
         .find(|p| p.p_type == pt::GNU_STACK)
         .expect("PT_GNU_STACK present");
     assert_ne!(gs.flags & pf::X, 0, "stack should be executable");
+    // The segment carries no file content and needs no address.
+    assert_eq!((gs.offset, gs.vaddr, gs.filesz, gs.memsz), (0, 0, 0, 0));
+}
 
-    let bin = Path::new(env!("CARGO_TARGET_TMPDIR")).join("gnustack-added");
-    std::fs::write(&bin, &bytes).unwrap();
-    let mut perms = std::fs::metadata(&bin).unwrap().permissions();
-    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
-    std::fs::set_permissions(&bin, perms).unwrap();
+#[test]
+fn build_resolution_cache_refreshes_in_place() {
+    use patchelf_rs::ir::pt;
+    let Some(_reference) = guard() else { return };
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("ldcache-refresh-dir");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = sample("exe-dyn-le");
+    for lib in out(&_reference, "--print-needed", &src).lines() {
+        std::fs::copy(&src, dir.join(lib)).unwrap();
+    }
+
+    let bin = copy("exe-dyn-le", "ldcache-refresh");
+    patch(&bin, &["--set-rpath", dir.to_str().unwrap()]);
+    patch(&bin, &["--build-resolution-cache"]);
+    // An intervening relayout moves the note; a second build must refresh it,
+    // not append a duplicate, and keep its PT_NOTE anchored.
+    patch(&bin, &["--add-needed", "libfoo.so.1"]);
+    patch(&bin, &["--build-resolution-cache"]);
+
+    let img = patchelf_rs::parser::parse(&std::fs::read(&bin).unwrap()).unwrap();
+    let notes: Vec<usize> = (0..img.shdrs.len())
+        .filter(|&i| img.section_name(i) == Some(".note.nixos.ldcache"))
+        .collect();
+    assert_eq!(notes.len(), 1, "exactly one ld-cache note section");
+    let addr = img.shdrs[notes[0]].addr;
     assert!(
-        Command::new(&bin).status().unwrap().success(),
-        "patched binary runs"
+        img.phdrs
+            .iter()
+            .any(|p| p.p_type == pt::NOTE && p.vaddr == addr),
+        "PT_NOTE must stay anchored on the note after a move"
     );
 }

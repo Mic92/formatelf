@@ -305,6 +305,17 @@ fn add_note_section(image: &mut ElfImage, desc: &[u8]) -> Result<()> {
         note.push(0);
     }
 
+    // Re-running must refresh the existing note, not append a duplicate. The
+    // layout engine re-anchors the covering PT_NOTE once the section moves.
+    if let Some(idx) = image.find_section(".note.nixos.ldcache") {
+        if image.section_data[idx] == note {
+            return Ok(()); // already up to date
+        }
+        image.section_data[idx] = note;
+        image.shdrs[idx].size = 0; // force re-placement
+        return Ok(());
+    }
+
     let shstr = image.ehdr.shstrndx as usize;
     if image.section_data.get(shstr).is_none() {
         return Err(Error::Missing("no section header string table".into()));
