@@ -18,6 +18,9 @@ pub enum Error {
     #[error("parse error: {0}")]
     Parse(String),
 
+    #[error("{0}")]
+    Missing(String),
+
     #[error("layout error: {0}")]
     Layout(String),
 

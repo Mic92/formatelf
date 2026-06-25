@@ -70,6 +70,33 @@ pub struct DynEntry {
     pub val: u64,
 }
 
+pub mod sht {
+    pub const STRTAB: u32 = 3;
+    pub const DYNAMIC: u32 = 6;
+    pub const NOBITS: u32 = 8;
+}
+
+pub mod et {
+    pub const EXEC: u16 = 2;
+    pub const DYN: u16 = 3;
+}
+
+pub mod pt {
+    pub const GNU_STACK: u32 = 0x6474_e551;
+}
+
+pub mod pf {
+    pub const X: u32 = 1;
+}
+
+pub mod dt {
+    pub const NULL: i64 = 0;
+    pub const NEEDED: i64 = 1;
+    pub const SONAME: i64 = 14;
+    pub const RPATH: i64 = 15;
+    pub const RUNPATH: i64 = 29;
+}
+
 /// Section contents owned separately so ops can grow them without fighting
 /// on-disk offsets; the layout engine assigns final offsets later.
 #[derive(Debug, Clone)]
@@ -81,4 +108,37 @@ pub struct ElfImage {
     /// Parallel to `shdrs`.
     pub section_data: Vec<Vec<u8>>,
     pub dynamic: Vec<DynEntry>,
+}
+
+/// Read a NUL-terminated string starting at `off` in a string table.
+pub fn cstr(tab: &[u8], off: u32) -> Option<&str> {
+    let tab = tab.get(off as usize..)?;
+    let end = tab.iter().position(|&b| b == 0).unwrap_or(tab.len());
+    std::str::from_utf8(&tab[..end]).ok()
+}
+
+impl ElfImage {
+    pub fn section_name(&self, idx: usize) -> Option<&str> {
+        let strtab = self.section_data.get(self.ehdr.shstrndx as usize)?;
+        cstr(strtab, self.shdrs.get(idx)?.name)
+    }
+
+    pub fn find_section(&self, name: &str) -> Option<usize> {
+        (0..self.shdrs.len()).find(|&i| self.section_name(i) == Some(name))
+    }
+
+    pub fn has_dynamic(&self) -> bool {
+        self.shdrs.iter().any(|s| s.sh_type == sht::DYNAMIC)
+    }
+
+    /// Bytes of the string table linked from the `.dynamic` section.
+    pub fn dynstr(&self) -> Option<&[u8]> {
+        let dyn_idx = self.shdrs.iter().position(|s| s.sh_type == sht::DYNAMIC)?;
+        let link = self.shdrs[dyn_idx].link as usize;
+        let s = self.shdrs.get(link)?;
+        if s.sh_type != sht::STRTAB {
+            return None;
+        }
+        self.section_data.get(link).map(Vec::as_slice)
+    }
 }

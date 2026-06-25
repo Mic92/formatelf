@@ -16,7 +16,26 @@ const SPECS: &[(&str, &str, &[&str])] = &[
     ("so-ppc64-be", "powerpc64-linux-musl", &["-shared"]),
     ("so-ppc-be", "powerpc-linux-musleabi", &["-shared"]),
     ("obj-x86_64", "x86_64-linux-musl", &["-c"]),
+    // Dynamically linked: interpreter, DT_NEEDED, DT_RUNPATH.
+    (
+        "exe-dyn-le",
+        "x86_64-linux-gnu",
+        &["-Wl,-rpath,/opt/custom/lib"],
+    ),
+    // Shared object carrying a DT_SONAME.
+    (
+        "so-soname-le",
+        "x86_64-linux-gnu",
+        &["-shared", "-Wl,-soname,libsample.so.1"],
+    ),
 ];
+
+/// Path to the reference C patchelf, if it has been built.
+#[allow(dead_code)] // only used by the differential test
+pub fn c_patchelf() -> Option<PathBuf> {
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../patchelf/src/patchelf");
+    p.exists().then_some(p)
+}
 
 pub fn zig_available() -> bool {
     Command::new("zig")
