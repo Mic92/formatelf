@@ -34,6 +34,14 @@ fn pod<T: object::Pod>(data: &[u8]) -> Result<&T> {
         .map_err(|_| Error::Parse("truncated struct".into()))
 }
 
+/// Narrow a widened IR value to a 32-bit on-disk field, refusing to silently
+/// truncate: a computed offset/addr/size that no longer fits an Elf32 file is a
+/// hard error, not a corrupt write.
+fn narrow(v: u64, field: &str) -> Result<u32> {
+    u32::try_from(v)
+        .map_err(|_| Error::Serialize(format!("{field} value {v:#x} overflows 32-bit ELF field")))
+}
+
 /// Returns the decoded header, its encoding, and the raw `(e_phnum, e_shnum)`
 /// table counts (needed by the parser; not stored in the IR since the
 /// serializer derives them from vector lengths).
@@ -127,7 +135,13 @@ pub fn read_ehdr(data: &[u8]) -> Result<(Ehdr, Encoding, u16, u16)> {
     Ok((ehdr, Encoding { class, endian }, phnum, shnum))
 }
 
-pub fn write_ehdr(enc: Encoding, h: &Ehdr, phnum: u16, shnum: u16, out: &mut Vec<u8>) {
+pub fn write_ehdr(
+    enc: Encoding,
+    h: &Ehdr,
+    phnum: u16,
+    shnum: u16,
+    out: &mut Vec<u8>,
+) -> Result<()> {
     let e = endianness(enc.endian);
     match enc.class {
         Class::Elf64 => {
@@ -157,9 +171,9 @@ pub fn write_ehdr(enc: Encoding, h: &Ehdr, phnum: u16, shnum: u16, out: &mut Vec
                 e_type: U16::new(e, h.e_type),
                 e_machine: U16::new(e, h.machine),
                 e_version: U32::new(e, h.version),
-                e_entry: U32::new(e, h.entry as u32),
-                e_phoff: U32::new(e, h.phoff as u32),
-                e_shoff: U32::new(e, h.shoff as u32),
+                e_entry: U32::new(e, narrow(h.entry, "e_entry")?),
+                e_phoff: U32::new(e, narrow(h.phoff, "e_phoff")?),
+                e_shoff: U32::new(e, narrow(h.shoff, "e_shoff")?),
                 e_flags: U32::new(e, h.flags),
                 e_ehsize: U16::new(e, h.ehsize),
                 e_phentsize: U16::new(e, h.phentsize),
@@ -173,6 +187,7 @@ pub fn write_ehdr(enc: Encoding, h: &Ehdr, phnum: u16, shnum: u16, out: &mut Vec
             out.extend_from_slice(&bytes);
         }
     }
+    Ok(())
 }
 
 pub fn read_phdr(enc: Encoding, data: &[u8]) -> Result<Phdr> {
@@ -207,7 +222,7 @@ pub fn read_phdr(enc: Encoding, data: &[u8]) -> Result<Phdr> {
     }
 }
 
-pub fn write_phdr(enc: Encoding, p: &Phdr, out: &mut Vec<u8>) {
+pub fn write_phdr(enc: Encoding, p: &Phdr, out: &mut Vec<u8>) -> Result<()> {
     let e = endianness(enc.endian);
     match enc.class {
         Class::Elf64 => {
@@ -226,17 +241,18 @@ pub fn write_phdr(enc: Encoding, p: &Phdr, out: &mut Vec<u8>) {
         Class::Elf32 => {
             let h = elf::ProgramHeader32::<Endianness> {
                 p_type: U32::new(e, p.p_type),
-                p_offset: U32::new(e, p.offset as u32),
-                p_vaddr: U32::new(e, p.vaddr as u32),
-                p_paddr: U32::new(e, p.paddr as u32),
-                p_filesz: U32::new(e, p.filesz as u32),
-                p_memsz: U32::new(e, p.memsz as u32),
+                p_offset: U32::new(e, narrow(p.offset, "p_offset")?),
+                p_vaddr: U32::new(e, narrow(p.vaddr, "p_vaddr")?),
+                p_paddr: U32::new(e, narrow(p.paddr, "p_paddr")?),
+                p_filesz: U32::new(e, narrow(p.filesz, "p_filesz")?),
+                p_memsz: U32::new(e, narrow(p.memsz, "p_memsz")?),
                 p_flags: U32::new(e, p.flags),
-                p_align: U32::new(e, p.align as u32),
+                p_align: U32::new(e, narrow(p.align, "p_align")?),
             };
             out.extend_from_slice(object::bytes_of(&h));
         }
     }
+    Ok(())
 }
 
 pub fn read_shdr(enc: Encoding, data: &[u8]) -> Result<Shdr> {
@@ -275,7 +291,7 @@ pub fn read_shdr(enc: Encoding, data: &[u8]) -> Result<Shdr> {
     }
 }
 
-pub fn write_shdr(enc: Encoding, s: &Shdr, out: &mut Vec<u8>) {
+pub fn write_shdr(enc: Encoding, s: &Shdr, out: &mut Vec<u8>) -> Result<()> {
     let e = endianness(enc.endian);
     match enc.class {
         Class::Elf64 => {
@@ -297,18 +313,19 @@ pub fn write_shdr(enc: Encoding, s: &Shdr, out: &mut Vec<u8>) {
             let h = elf::SectionHeader32::<Endianness> {
                 sh_name: U32::new(e, s.name),
                 sh_type: U32::new(e, s.sh_type),
-                sh_flags: U32::new(e, s.flags as u32),
-                sh_addr: U32::new(e, s.addr as u32),
-                sh_offset: U32::new(e, s.offset as u32),
-                sh_size: U32::new(e, s.size as u32),
+                sh_flags: U32::new(e, narrow(s.flags, "sh_flags")?),
+                sh_addr: U32::new(e, narrow(s.addr, "sh_addr")?),
+                sh_offset: U32::new(e, narrow(s.offset, "sh_offset")?),
+                sh_size: U32::new(e, narrow(s.size, "sh_size")?),
                 sh_link: U32::new(e, s.link),
                 sh_info: U32::new(e, s.info),
-                sh_addralign: U32::new(e, s.addralign as u32),
-                sh_entsize: U32::new(e, s.entsize as u32),
+                sh_addralign: U32::new(e, narrow(s.addralign, "sh_addralign")?),
+                sh_entsize: U32::new(e, narrow(s.entsize, "sh_entsize")?),
             };
             out.extend_from_slice(object::bytes_of(&h));
         }
     }
+    Ok(())
 }
 
 pub fn read_dyn(enc: Encoding, data: &[u8]) -> Result<DynEntry> {
@@ -331,7 +348,7 @@ pub fn read_dyn(enc: Encoding, data: &[u8]) -> Result<DynEntry> {
     }
 }
 
-pub fn write_dyn(enc: Encoding, d: &DynEntry, out: &mut Vec<u8>) {
+pub fn write_dyn(enc: Encoding, d: &DynEntry, out: &mut Vec<u8>) -> Result<()> {
     let e = endianness(enc.endian);
     match enc.class {
         Class::Elf64 => {
@@ -342,13 +359,16 @@ pub fn write_dyn(enc: Encoding, d: &DynEntry, out: &mut Vec<u8>) {
             out.extend_from_slice(object::bytes_of(&h));
         }
         Class::Elf32 => {
+            // d_tag is Elf32_Sword: the standard tags use its 32-bit pattern, so
+            // truncation is intentional. Only d_val carries addresses/sizes.
             let h = elf::Dyn32::<Endianness> {
                 d_tag: U32::new(e, d.tag as u32),
-                d_val: U32::new(e, d.val as u32),
+                d_val: U32::new(e, narrow(d.val, "d_val")?),
             };
             out.extend_from_slice(object::bytes_of(&h));
         }
     }
+    Ok(())
 }
 
 pub fn phdr_size(class: Class) -> usize {
@@ -369,5 +389,33 @@ pub fn dyn_size(class: Class) -> usize {
     match class {
         Class::Elf64 => core::mem::size_of::<elf::Dyn64<Endianness>>(),
         Class::Elf32 => core::mem::size_of::<elf::Dyn32<Endianness>>(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::Shdr;
+
+    #[test]
+    fn elf32_rejects_oversized_offset() {
+        let enc = Encoding {
+            class: Class::Elf32,
+            endian: Endian::Little,
+        };
+        let s = Shdr {
+            name: 0,
+            sh_type: 1,
+            flags: 0,
+            addr: 0,
+            offset: 0x1_0000_0000, // > u32::MAX
+            size: 0,
+            link: 0,
+            info: 0,
+            addralign: 0,
+            entsize: 0,
+        };
+        let mut out = Vec::new();
+        assert!(write_shdr(enc, &s, &mut out).is_err());
     }
 }

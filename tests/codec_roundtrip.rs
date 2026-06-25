@@ -19,14 +19,15 @@ fn check(path: &std::path::Path) {
         img.phdrs.len() as u16,
         img.shdrs.len() as u16,
         &mut buf,
-    );
+    )
+    .unwrap();
     assert_eq!(buf, &data[..buf.len()], "ehdr mismatch for {path:?}");
 
     let phsize = codec::phdr_size(img.enc.class);
     for (i, p) in img.phdrs.iter().enumerate() {
         let off = img.ehdr.phoff as usize + i * phsize;
         let mut buf = Vec::new();
-        codec::write_phdr(img.enc, p, &mut buf);
+        codec::write_phdr(img.enc, p, &mut buf).unwrap();
         assert_eq!(
             buf,
             &data[off..off + phsize],
@@ -38,7 +39,7 @@ fn check(path: &std::path::Path) {
     for (i, s) in img.shdrs.iter().enumerate() {
         let off = img.ehdr.shoff as usize + i * shsize;
         let mut buf = Vec::new();
-        codec::write_shdr(img.enc, s, &mut buf);
+        codec::write_shdr(img.enc, s, &mut buf).unwrap();
         assert_eq!(
             buf,
             &data[off..off + shsize],
@@ -50,7 +51,7 @@ fn check(path: &std::path::Path) {
     if !img.dynamic.is_empty() {
         let mut buf = Vec::new();
         for d in &img.dynamic {
-            codec::write_dyn(img.enc, d, &mut buf);
+            codec::write_dyn(img.enc, d, &mut buf).unwrap();
         }
         let dyn_sh = img
             .shdrs

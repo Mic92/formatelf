@@ -24,13 +24,13 @@ fn put_table<T>(
     base: u64,
     enc: Encoding,
     items: &[T],
-    encode: impl Fn(Encoding, &T, &mut Vec<u8>),
+    encode: impl Fn(Encoding, &T, &mut Vec<u8>) -> Result<()>,
     what: &str,
 ) -> Result<()> {
     let mut tmp = Vec::new();
     for (i, it) in items.iter().enumerate() {
         tmp.clear();
-        encode(enc, it, &mut tmp);
+        encode(enc, it, &mut tmp)?;
         put(buf, base + (i * tmp.len()) as u64, &tmp, what)?;
     }
     Ok(())
@@ -46,7 +46,7 @@ pub fn write(image: &ElfImage, mut buf: Vec<u8>) -> Result<Vec<u8>> {
         image.phdrs.len() as u16,
         image.shdrs.len() as u16,
         &mut tmp,
-    );
+    )?;
     put(&mut buf, 0, &tmp, "ehdr")?;
 
     put_table(

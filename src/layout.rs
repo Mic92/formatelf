@@ -42,14 +42,17 @@ fn section_len(image: &ElfImage, i: usize) -> u64 {
 /// Re-encode the dynamic array into its section data, zero-padding to the
 /// header size so a shrunk array's trailing DT_NULL still terminates. Called
 /// once, after address fixups, so it captures the final entry values.
-fn sync_dynamic(image: &mut ElfImage) {
-    let Some(idx) = dyn_idx(image) else { return };
+fn sync_dynamic(image: &mut ElfImage) -> Result<()> {
+    let Some(idx) = dyn_idx(image) else {
+        return Ok(());
+    };
     let mut bytes = Vec::new();
     for d in &image.dynamic {
-        codec::write_dyn(image.enc, d, &mut bytes);
+        codec::write_dyn(image.enc, d, &mut bytes)?;
     }
     bytes.resize((image.shdrs[idx].size as usize).max(bytes.len()), 0);
     image.section_data[idx] = bytes;
+    Ok(())
 }
 
 fn grown_sections(image: &ElfImage) -> Vec<usize> {
@@ -63,7 +66,7 @@ fn grown_sections(image: &ElfImage) -> Vec<usize> {
 pub fn finalize(image: &mut ElfImage, original: &[u8], page_size: Option<u64>) -> Result<Vec<u8>> {
     let grown = grown_sections(image);
     if grown.is_empty() {
-        sync_dynamic(image);
+        sync_dynamic(image)?;
         return serialize::write(image, original.to_vec());
     }
     if image.ehdr.e_type != et::DYN && image.ehdr.e_type != et::EXEC {
@@ -158,7 +161,7 @@ fn relayout(
 
     sync_segments(image);
     fixup_dynamic_addrs(image);
-    sync_dynamic(image);
+    sync_dynamic(image)?;
 
     constraints::validate(image)?;
     serialize::write(image, buf)
