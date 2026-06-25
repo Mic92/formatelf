@@ -67,6 +67,7 @@ pub fn finalize(image: &mut ElfImage, original: &[u8], page_size: Option<u64>) -
     let grown = grown_sections(image);
     if grown.is_empty() {
         sync_dynamic(image)?;
+        constraints::validate(image)?;
         return serialize::write(image, original.to_vec());
     }
     if image.ehdr.e_type != et::DYN && image.ehdr.e_type != et::EXEC {
