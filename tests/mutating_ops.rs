@@ -34,6 +34,20 @@ fn patch(file: &Path, args: &[&str]) {
     assert!(st.success(), "patch {args:?} failed");
 }
 
+/// The loader resolves dynamic strings via DT_STRTAB's address, not the section
+/// header, so after a relayout DT_STRTAB must point at the relocated .dynstr.
+fn assert_dynstr_synced(file: &Path) {
+    let img = patchelf_rs::parser::parse(&std::fs::read(file).unwrap()).unwrap();
+    let strtab = img
+        .dynamic
+        .iter()
+        .find(|d| d.tag == patchelf_rs::ir::dt::STRTAB)
+        .unwrap()
+        .val;
+    let dynstr = img.shdrs[img.find_section(".dynstr").unwrap()].addr;
+    assert_eq!(strtab, dynstr, "DT_STRTAB not synced to moved .dynstr");
+}
+
 fn guard() -> Option<PathBuf> {
     if !fixtures::zig_available() {
         eprintln!("skipping: zig not on PATH");
@@ -157,17 +171,7 @@ fn set_rpath_grows_and_stays_loadable() {
     assert_eq!(out(&reference, "--print-needed", &bin), needed);
     assert_eq!(out(&reference, "--print-interpreter", &bin), interp);
 
-    // The loader resolves DT_RUNPATH via DT_STRTAB's address, not the section
-    // header, so DT_STRTAB must point at the relocated .dynstr.
-    let img = patchelf_rs::parser::parse(&std::fs::read(&bin).unwrap()).unwrap();
-    let strtab = img
-        .dynamic
-        .iter()
-        .find(|d| d.tag == patchelf_rs::ir::dt::STRTAB)
-        .unwrap()
-        .val;
-    let dynstr = img.shdrs[img.find_section(".dynstr").unwrap()].addr;
-    assert_eq!(strtab, dynstr, "DT_STRTAB not synced to moved .dynstr");
+    assert_dynstr_synced(&bin);
 
     assert!(
         Command::new(&bin).status().unwrap().success(),
@@ -293,14 +297,7 @@ fn set_rpath_on_non_pie_executable() {
     patch(&bin, &["--set-rpath", long]);
 
     assert_eq!(out(&reference, "--print-rpath", &bin).trim(), long);
-    let img = patchelf_rs::parser::parse(&std::fs::read(&bin).unwrap()).unwrap();
-    let strtab = img
-        .dynamic
-        .iter()
-        .find(|d| d.tag == patchelf_rs::ir::dt::STRTAB)
-        .unwrap()
-        .val;
-    assert_eq!(strtab, img.shdrs[img.find_section(".dynstr").unwrap()].addr);
+    assert_dynstr_synced(&bin);
     assert!(
         Command::new(&bin).status().unwrap().success(),
         "patched ET_EXEC failed to run"
