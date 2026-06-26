@@ -566,6 +566,68 @@ fn adds_gnu_stack_segment_when_absent() {
     assert_eq!((gs.offset, gs.vaddr, gs.filesz, gs.memsz), (0, 0, 0, 0));
 }
 
+fn ldcache_note(p: &Path) -> Vec<u8> {
+    let img = patchelf_rs::parser::parse(&std::fs::read(p).unwrap()).unwrap();
+    let i = img
+        .find_section(".note.nixos.ldcache")
+        .expect("ld-cache note written");
+    img.section_data[i].clone()
+}
+
+/// $ORIGIN (and other token/hwcaps dirs) cannot be resolved at patch time, so
+/// the directory is recorded as a `?` hint rather than a `=` absolute path.
+#[test]
+fn build_resolution_cache_records_unresolvable_hint() {
+    let Some(reference) = guard() else { return };
+    let mk = |tag: &str| {
+        let bin = copy("exe-dyn-le", tag);
+        patch(&bin, &["--set-rpath", "$ORIGIN/../lib"]);
+        bin
+    };
+    let ours = mk("ldcache-hint-ours");
+    let theirs = mk("ldcache-hint-ref");
+    patch(&ours, &["--build-resolution-cache"]);
+    assert!(Command::new(&reference)
+        .arg("--build-resolution-cache")
+        .arg(&theirs)
+        .status()
+        .unwrap()
+        .success());
+    assert_eq!(ldcache_note(&ours), ldcache_note(&theirs));
+}
+
+/// A lib found under several run-path directories yields one note entry whose
+/// resolved paths are joined with ':'.
+#[test]
+fn build_resolution_cache_joins_multiple_dirs() {
+    let Some(reference) = guard() else { return };
+    let src = sample("exe-dyn-le");
+    let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("ldcache-multi");
+    let (d1, d2) = (base.join("a"), base.join("b"));
+    std::fs::create_dir_all(&d1).unwrap();
+    std::fs::create_dir_all(&d2).unwrap();
+    for lib in out(&reference, "--print-needed", &src).lines() {
+        std::fs::copy(&src, d1.join(lib)).unwrap();
+        std::fs::copy(&src, d2.join(lib)).unwrap();
+    }
+    let rpath = format!("{}:{}", d1.display(), d2.display());
+    let mk = |tag: &str| {
+        let bin = copy("exe-dyn-le", tag);
+        patch(&bin, &["--set-rpath", &rpath]);
+        bin
+    };
+    let ours = mk("ldcache-multi-ours");
+    let theirs = mk("ldcache-multi-ref");
+    patch(&ours, &["--build-resolution-cache"]);
+    assert!(Command::new(&reference)
+        .arg("--build-resolution-cache")
+        .arg(&theirs)
+        .status()
+        .unwrap()
+        .success());
+    assert_eq!(ldcache_note(&ours), ldcache_note(&theirs));
+}
+
 #[test]
 fn build_resolution_cache_refreshes_in_place() {
     use patchelf_rs::ir::pt;
