@@ -1,0 +1,25 @@
+# Separate workspace so the fuzz instrumentation never leaks into the main
+# crate's normal builds.
+[package]
+name = "patchelf-rs-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.patchelf-rs]
+path = ".."
+
+[[bin]]
+name = "parse"
+path = "fuzz_targets/parse.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]

@@ -2,3 +2,10 @@
 /mutants.out*
 Cargo.lock
 /tests/samples/.zig-cache
+/fuzz/corpus/parse
+/fuzz/target
+/fuzz/artifacts/parse
+/fuzz/target
+/fuzz/corpus
+/fuzz/artifacts
+/fuzz/Cargo.lock

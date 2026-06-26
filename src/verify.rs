@@ -28,7 +28,10 @@ pub fn run(image: &ElfImage) -> Result<()> {
     }
 
     // PT_LOAD virtual address ranges must not overlap.
-    let mut ranges: Vec<(u64, u64)> = loads.iter().map(|p| (p.vaddr, p.vaddr + p.memsz)).collect();
+    let mut ranges: Vec<(u64, u64)> = loads
+        .iter()
+        .map(|p| (p.vaddr, p.vaddr.saturating_add(p.memsz)))
+        .collect();
     ranges.sort_by_key(|r| r.0);
     for w in ranges.windows(2) {
         if w[0].1 > w[1].0 {
@@ -37,10 +40,13 @@ pub fn run(image: &ElfImage) -> Result<()> {
     }
 
     // The program header table must live inside some PT_LOAD.
-    let pht_end = image.ehdr.phoff + image.phdrs.len() as u64 * image.ehdr.phentsize as u64;
+    let pht_end = image
+        .ehdr
+        .phoff
+        .saturating_add((image.phdrs.len() as u64).saturating_mul(image.ehdr.phentsize as u64));
     let covered = loads
         .iter()
-        .any(|p| image.ehdr.phoff >= p.offset && pht_end <= p.offset + p.filesz);
+        .any(|p| image.ehdr.phoff >= p.offset && pht_end <= p.offset.saturating_add(p.filesz));
     if !covered {
         return Err(fail("program header table not covered by a PT_LOAD"));
     }
@@ -64,7 +70,11 @@ fn phdr_anchor(image: &ElfImage, loads: &[&Phdr]) -> Result<()> {
     if phdr.offset != image.ehdr.phoff {
         return Err(fail("PT_PHDR offset disagrees with e_phoff"));
     }
-    if phdr.vaddr != base.vaddr + (image.ehdr.phoff - base.offset) {
+    if phdr.vaddr
+        != base
+            .vaddr
+            .saturating_add(image.ehdr.phoff.saturating_sub(base.offset))
+    {
         return Err(fail("PT_PHDR vaddr breaks the AT_PHDR load-bias invariant"));
     }
     Ok(())

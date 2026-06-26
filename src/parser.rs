@@ -15,22 +15,33 @@ fn slice<'a>(data: &'a [u8], off: u64, len: u64, what: &str) -> Result<&'a [u8]>
         .ok_or_else(|| Error::Parse(format!("{what}: out of bounds")))
 }
 
+/// Validate that a `count`-entry table of `size`-byte records fits at `off`,
+/// returning its bytes. Bounding the span before allocating caps `count` to
+/// the file size, so an attacker's huge header count cannot drive a giant
+/// Vec::with_capacity.
+fn table<'a>(data: &'a [u8], off: u64, count: u64, size: u64, what: &str) -> Result<&'a [u8]> {
+    let len = count
+        .checked_mul(size)
+        .ok_or_else(|| Error::Parse(format!("{what}: count overflow")))?;
+    slice(data, off, len, what)
+}
+
 pub fn parse(data: &[u8]) -> Result<ElfImage> {
     let (mut ehdr, enc, raw_phnum, raw_shnum) = codec::read_ehdr(data)?;
     let (phnum, shnum) = resolve_counts(data, enc, &mut ehdr, raw_phnum, raw_shnum)?;
 
     let phsize = codec::phdr_size(enc.class) as u64;
+    let phbytes = table(data, ehdr.phoff, phnum, phsize, "program headers")?;
     let mut phdrs = Vec::with_capacity(phnum as usize);
-    for i in 0..phnum {
-        let off = ehdr.phoff + i * phsize;
-        phdrs.push(codec::read_phdr(enc, slice(data, off, phsize, "phdr")?)?);
+    for chunk in phbytes.chunks_exact(phsize as usize) {
+        phdrs.push(codec::read_phdr(enc, chunk)?);
     }
 
     let shsize = codec::shdr_size(enc.class) as u64;
+    let shbytes = table(data, ehdr.shoff, shnum, shsize, "section headers")?;
     let mut shdrs = Vec::with_capacity(shnum as usize);
-    for i in 0..shnum {
-        let off = ehdr.shoff + i * shsize;
-        shdrs.push(codec::read_shdr(enc, slice(data, off, shsize, "shdr")?)?);
+    for chunk in shbytes.chunks_exact(shsize as usize) {
+        shdrs.push(codec::read_shdr(enc, chunk)?);
     }
 
     let mut section_data = Vec::with_capacity(shdrs.len());
@@ -107,8 +118,8 @@ fn vaddr_to_off(phdrs: &[Phdr], vaddr: u64) -> Option<u64> {
     phdrs
         .iter()
         .filter(|p| p.p_type == pt::LOAD)
-        .find(|p| vaddr >= p.vaddr && vaddr < p.vaddr + p.filesz)
-        .map(|p| p.offset + (vaddr - p.vaddr))
+        .find(|p| vaddr >= p.vaddr && vaddr < p.vaddr.saturating_add(p.filesz))
+        .map(|p| p.offset.saturating_add(vaddr - p.vaddr))
 }
 
 /// Resolve the PN_XNUM / SHN_XINDEX escapes. When the 16-bit header fields
@@ -169,4 +180,29 @@ fn read_dynamic(
         return read_dyn_array(data, enc, p.offset, p.filesz);
     }
     Ok(Vec::new())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression: a PT_LOAD with vaddr near u64::MAX overflowed the
+    /// `vaddr + filesz` range check while recovering .dynstr from segments.
+    #[test]
+    fn vaddr_to_off_handles_address_overflow() {
+        let huge = u64::MAX - 0xff;
+        let load = Phdr {
+            p_type: pt::LOAD,
+            flags: 0,
+            offset: 0x1000,
+            vaddr: huge,
+            paddr: 0,
+            filesz: 0x1000,
+            memsz: 0x1000,
+            align: 1,
+        };
+        // The requested vaddr falls inside the segment, forcing the upper-bound
+        // check that used to overflow. It must return, not panic.
+        assert_eq!(vaddr_to_off(&[load], huge), Some(0x1000));
+    }
 }
