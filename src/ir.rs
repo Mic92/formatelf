@@ -251,3 +251,48 @@ impl ElfImage {
         self.dynstr_fallback.as_deref()
     }
 }
+
+#[cfg(test)]
+mod codec_tests {
+    use super::Endian;
+    use proptest::prelude::*;
+
+    fn endian(big: bool) -> Endian {
+        if big {
+            Endian::Big
+        } else {
+            Endian::Little
+        }
+    }
+
+    proptest! {
+        /// write then read is the identity at an arbitrary offset, and the
+        /// surrounding sentinel bytes are left untouched (no over-wide write).
+        #[test]
+        fn u64_roundtrips(v: u64, big: bool, pad in 0usize..4) {
+            let e = endian(big);
+            let mut b = vec![0xAAu8; pad + 8 + pad];
+            e.write_u64(&mut b, pad, v);
+            prop_assert_eq!(e.read_u64(&b, pad), v);
+            prop_assert!(b[..pad].iter().chain(&b[pad + 8..]).all(|&x| x == 0xAA));
+        }
+
+        #[test]
+        fn u32_roundtrips(v: u32, big: bool, pad in 0usize..4) {
+            let e = endian(big);
+            let mut b = vec![0xAAu8; pad + 4 + pad];
+            e.write_u32(&mut b, pad, v);
+            prop_assert_eq!(e.read_u32(&b, pad), v);
+            prop_assert!(b[..pad].iter().chain(&b[pad + 4..]).all(|&x| x == 0xAA));
+        }
+
+        #[test]
+        fn u16_roundtrips(v: u16, big: bool, pad in 0usize..4) {
+            let e = endian(big);
+            let mut b = vec![0xAAu8; pad + 2 + pad];
+            e.write_u16(&mut b, pad, v);
+            prop_assert_eq!(e.read_u16(&b, pad), v);
+            prop_assert!(b[..pad].iter().chain(&b[pad + 2..]).all(|&x| x == 0xAA));
+        }
+    }
+}

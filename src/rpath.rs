@@ -53,35 +53,53 @@ pub fn shrink(image: &mut ElfImage, mods: &Modifiers) -> Result<()> {
     }
     let needed = needed(image)?;
     let machine = image.ehdr.machine;
+    // A directory is useful if it supplies a needed lib of the right machine
+    // not yet found in an earlier directory.
     let mut found = vec![false; needed.len()];
-    let mut kept: Vec<&str> = Vec::new();
-
-    for dir in cur.split(':').filter(|s| !s.is_empty()) {
-        if !dir.starts_with('/') {
-            kept.push(dir);
-            continue;
-        }
-        let allowed = &mods.allowed_rpath_prefixes;
-        if !allowed.is_empty() && !allowed.iter().any(|p| dir.starts_with(p)) {
-            continue;
-        }
-        let mut dir_useful = false;
+    let keep = |dir: &str| {
+        let mut useful = false;
         for (j, lib) in needed.iter().enumerate() {
-            if found[j] {
-                continue;
-            }
-            if elf_machine(&Path::new(dir).join(lib)) == Some(machine) {
+            if !found[j] && elf_machine(&Path::new(dir).join(lib)) == Some(machine) {
                 found[j] = true;
-                dir_useful = true;
+                useful = true;
             }
         }
-        if dir_useful {
-            kept.push(dir);
+        useful
+    };
+    let new = filter_dirs(&cur, &mods.allowed_rpath_prefixes, keep);
+    set(image, &new, mods.force_rpath)
+}
+
+/// Filter a colon-separated rpath: drop empty components, keep non-absolute
+/// entries (e.g. $ORIGIN) verbatim, and keep an absolute entry only when it
+/// passes the `allowed` prefixes (if any) and `keep` accepts it. Order is
+/// preserved. Pure, so the splitting/prefix logic is property-tested below.
+fn filter_dirs(cur: &str, allowed: &[String], mut keep: impl FnMut(&str) -> bool) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    for dir in cur.split(':').filter(|s| !s.is_empty()) {
+        let allowed_ok = allowed.is_empty() || allowed.iter().any(|p| dir.starts_with(p));
+        if !dir.starts_with('/') || (allowed_ok && keep(dir)) {
+            out.push(dir);
         }
     }
+    out.join(":")
+}
 
-    let new = kept.join(":");
-    set(image, &new, mods.force_rpath)
+/// Read an ELF file's e_machine, or None if it isn't a readable ELF. Reads only
+/// the leading header bytes so probing large shared libraries stays cheap.
+fn elf_machine(path: &Path) -> Option<u16> {
+    use std::io::Read;
+    let mut head = [0u8; 20];
+    std::fs::File::open(path).ok()?.read_exact(&mut head).ok()?;
+    if &head[..4] != b"\x7fELF" {
+        return None;
+    }
+    let m = [head[18], head[19]];
+    Some(if head[5] == 1 {
+        u16::from_le_bytes(m) // EI_DATA: 1 = little-endian
+    } else {
+        u16::from_be_bytes(m)
+    })
 }
 
 /// Set DT_RUNPATH (or DT_RPATH when `force`). Reuses the existing string slot
@@ -143,19 +161,36 @@ pub fn set(image: &mut ElfImage, new: &str, force: bool) -> Result<()> {
     Ok(())
 }
 
-/// Read an ELF file's e_machine, or None if it isn't a readable ELF. Reads only
-/// the leading header bytes so probing large shared libraries stays cheap.
-fn elf_machine(path: &Path) -> Option<u16> {
-    use std::io::Read;
-    let mut head = [0u8; 20];
-    std::fs::File::open(path).ok()?.read_exact(&mut head).ok()?;
-    if &head[..4] != b"\x7fELF" {
-        return None;
+#[cfg(test)]
+mod tests {
+    use super::filter_dirs;
+    use proptest::prelude::*;
+
+    /// A colon-joined rpath of mixed empty / absolute / relative components.
+    fn rpath() -> impl Strategy<Value = String> {
+        let component = prop_oneof![
+            Just(String::new()),
+            "/[a-z]{1,5}(/[a-z]{1,5})*",
+            "[a-z]{1,5}",
+            Just("$ORIGIN".to_string()),
+        ];
+        prop::collection::vec(component, 0..8).prop_map(|v| v.join(":"))
     }
-    let m = [head[18], head[19]];
-    Some(if head[5] == 1 {
-        u16::from_le_bytes(m) // EI_DATA: 1 = little-endian
-    } else {
-        u16::from_be_bytes(m)
-    })
+
+    proptest! {
+        /// With everything accepted, filtering only drops empty components.
+        #[test]
+        fn keeps_all_nonempty_when_accepted(cur in rpath()) {
+            let got = filter_dirs(&cur, &[], |_| true);
+            let want: Vec<&str> = cur.split(':').filter(|s| !s.is_empty()).collect();
+            prop_assert_eq!(got, want.join(":"));
+        }
+
+        /// Rejecting every absolute dir leaves only the relative ones.
+        #[test]
+        fn drops_absolute_when_rejected(cur in rpath()) {
+            let got = filter_dirs(&cur, &[], |_| false);
+            prop_assert!(got.split(':').all(|d| d.is_empty() || !d.starts_with('/')));
+        }
+    }
 }

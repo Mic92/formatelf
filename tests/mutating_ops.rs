@@ -3,62 +3,9 @@
 
 mod fixtures;
 
-use std::path::{Path, PathBuf};
+use fixtures::{assert_dynstr_synced, copy, guard, out, patch, sample};
+use std::path::Path;
 use std::process::Command;
-
-fn ours() -> &'static Path {
-    Path::new(env!("CARGO_BIN_EXE_patchelf"))
-}
-
-fn out(bin: &Path, op: &str, file: &Path) -> String {
-    let o = Command::new(bin).arg(op).arg(file).output().unwrap();
-    assert!(o.status.success(), "{op} on {file:?} failed");
-    String::from_utf8_lossy(&o.stdout).into_owned()
-}
-
-fn sample(name: &str) -> PathBuf {
-    fixtures::samples()
-        .into_iter()
-        .find(|p| p.file_name().unwrap() == name)
-        .unwrap()
-}
-
-fn copy(name: &str, suffix: &str) -> PathBuf {
-    let dst = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("{name}.{suffix}"));
-    std::fs::copy(sample(name), &dst).unwrap();
-    dst
-}
-
-fn patch(file: &Path, args: &[&str]) {
-    let st = Command::new(ours()).args(args).arg(file).status().unwrap();
-    assert!(st.success(), "patch {args:?} failed");
-}
-
-/// The loader resolves dynamic strings via DT_STRTAB's address, not the section
-/// header, so after a relayout DT_STRTAB must point at the relocated .dynstr.
-fn assert_dynstr_synced(file: &Path) {
-    let img = patchelf_rs::parser::parse(&std::fs::read(file).unwrap()).unwrap();
-    let strtab = img
-        .dynamic
-        .iter()
-        .find(|d| d.tag == patchelf_rs::ir::dt::STRTAB)
-        .unwrap()
-        .val;
-    let dynstr = img.shdrs[img.find_section(".dynstr").unwrap()].addr;
-    assert_eq!(strtab, dynstr, "DT_STRTAB not synced to moved .dynstr");
-}
-
-fn guard() -> Option<PathBuf> {
-    if !fixtures::zig_available() {
-        eprintln!("skipping: zig not on PATH");
-        return None;
-    }
-    let r = fixtures::c_patchelf();
-    if r.is_none() {
-        eprintln!("skipping: reference patchelf not built");
-    }
-    r
-}
 
 #[test]
 fn set_interpreter_grows_and_runs() {
@@ -170,12 +117,28 @@ fn set_rpath_grows_and_stays_loadable() {
     assert_eq!(out(&reference, "--print-rpath", &bin).trim(), long);
     assert_eq!(out(&reference, "--print-needed", &bin), needed);
     assert_eq!(out(&reference, "--print-interpreter", &bin), interp);
-
     assert_dynstr_synced(&bin);
-
     assert!(
         Command::new(&bin).status().unwrap().success(),
         "patched binary failed to run"
+    );
+}
+
+#[test]
+fn set_rpath_on_non_pie_executable() {
+    let Some(reference) = guard() else { return };
+    let src = sample("exe-nopie-le");
+    assert!(Command::new(&src).status().unwrap().success());
+
+    let bin = copy("exe-nopie-le", "rpath");
+    let long = "/a/much/longer/rpath/than/before/for/the/exec/path/lib";
+    patch(&bin, &["--set-rpath", long]);
+
+    assert_eq!(out(&reference, "--print-rpath", &bin).trim(), long);
+    assert_dynstr_synced(&bin);
+    assert!(
+        Command::new(&bin).status().unwrap().success(),
+        "patched ET_EXEC failed to run"
     );
 }
 
@@ -284,24 +247,6 @@ fn add_debug_tag_inserts_entry() {
         .any(|d| d.tag == patchelf_rs::ir::dt::DEBUG));
     // Runs because DT_DEBUG is benign.
     assert!(Command::new(&bin).status().unwrap().success());
-}
-
-#[test]
-fn set_rpath_on_non_pie_executable() {
-    let Some(reference) = guard() else { return };
-    let src = sample("exe-nopie-le");
-    assert!(Command::new(&src).status().unwrap().success());
-
-    let bin = copy("exe-nopie-le", "rpath");
-    let long = "/a/much/longer/rpath/than/before/for/the/exec/path/lib";
-    patch(&bin, &["--set-rpath", long]);
-
-    assert_eq!(out(&reference, "--print-rpath", &bin).trim(), long);
-    assert_dynstr_synced(&bin);
-    assert!(
-        Command::new(&bin).status().unwrap().success(),
-        "patched ET_EXEC failed to run"
-    );
 }
 
 #[test]

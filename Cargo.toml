@@ -20,5 +20,8 @@ memmap2 = "0.9"
 thiserror = "2"
 lexopt = "0.3"
 
+[dev-dependencies]
+proptest = { version = "1", default-features = false, features = ["std"] }
+
 [profile.release]
 panic = "abort"

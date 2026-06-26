@@ -2,6 +2,7 @@
 //! source with `zig cc` for several arch/endian/class combinations the first
 //! time the fixtures are requested. Requires `zig` on PATH (provided by the
 //! dev shell); tests skip themselves when it is absent.
+#![allow(dead_code)] // each test binary uses only part of this shared module
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -36,8 +37,69 @@ const SPECS: &[(&str, &str, &[&str])] = &[
     ),
 ];
 
+/// The patchelf binary under test.
+pub fn ours() -> &'static Path {
+    Path::new(env!("CARGO_BIN_EXE_patchelf"))
+}
+
+/// Run a read-only op on `file` and return its stdout, asserting success.
+pub fn out(bin: &Path, op: &str, file: &Path) -> String {
+    let o = Command::new(bin).arg(op).arg(file).output().unwrap();
+    assert!(o.status.success(), "{op} on {file:?} failed");
+    String::from_utf8_lossy(&o.stdout).into_owned()
+}
+
+/// Path to the named fixture.
+pub fn sample(name: &str) -> PathBuf {
+    samples()
+        .into_iter()
+        .find(|p| p.file_name().unwrap() == name)
+        .unwrap()
+}
+
+/// A writable copy of a fixture, named with `suffix` to keep cases isolated.
+pub fn copy(name: &str, suffix: &str) -> PathBuf {
+    let dst = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("{name}.{suffix}"));
+    std::fs::copy(sample(name), &dst).unwrap();
+    dst
+}
+
+/// Apply our patchelf to `file`, asserting success.
+pub fn patch(file: &Path, args: &[&str]) {
+    let st = Command::new(ours()).args(args).arg(file).status().unwrap();
+    assert!(st.success(), "patch {args:?} failed");
+}
+
+/// The reference patchelf, but only if both it and zig are present; otherwise
+/// the caller skips. Differential tests gate on this.
+pub fn guard() -> Option<PathBuf> {
+    if !zig_available() {
+        eprintln!("skipping: zig not on PATH");
+        return None;
+    }
+    let r = c_patchelf();
+    if r.is_none() {
+        eprintln!("skipping: reference patchelf not built");
+    }
+    r
+}
+
+/// The loader resolves dynamic strings via DT_STRTAB's address, not the section
+/// header, so after a relayout DT_STRTAB must point at the relocated .dynstr.
+pub fn assert_dynstr_synced(file: &Path) {
+    use patchelf_rs::ir::dt;
+    let img = patchelf_rs::parser::parse(&std::fs::read(file).unwrap()).unwrap();
+    let strtab = img
+        .dynamic
+        .iter()
+        .find(|d| d.tag == dt::STRTAB)
+        .unwrap()
+        .val;
+    let dynstr = img.shdrs[img.find_section(".dynstr").unwrap()].addr;
+    assert_eq!(strtab, dynstr, "DT_STRTAB not synced to moved .dynstr");
+}
+
 /// Path to the reference C patchelf, if it has been built.
-#[allow(dead_code)] // only used by the differential test
 pub fn c_patchelf() -> Option<PathBuf> {
     let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../patchelf/src/patchelf");
     p.exists().then_some(p)
