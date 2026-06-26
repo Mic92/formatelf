@@ -4,7 +4,7 @@
 
 use crate::codec;
 use crate::error::{Error, Result};
-use crate::ir::{dt, pt, DynEntry, ElfImage, Encoding, Phdr, Shdr};
+use crate::ir::{dt, pt, DynEntry, Ehdr, ElfImage, Encoding, Phdr, Shdr};
 
 const SHT_NOBITS: u32 = 8;
 const SHT_DYNAMIC: u32 = 6;
@@ -109,7 +109,7 @@ fn vaddr_to_off(phdrs: &[Phdr], vaddr: u64) -> Option<u64> {
 fn resolve_counts(
     data: &[u8],
     enc: Encoding,
-    ehdr: &mut crate::ir::Ehdr,
+    ehdr: &mut Ehdr,
     raw_phnum: u16,
     raw_shnum: u16,
 ) -> Result<(u64, u64)> {

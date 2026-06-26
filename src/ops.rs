@@ -1,6 +1,9 @@
 //! Pure transforms on [`ir::ElfImage`]. Never compute offsets or touch I/O;
 //! relayout happens once afterwards in the layout engine.
 
+use std::collections::BTreeMap;
+use std::path::Path;
+
 use crate::cli::Operation;
 use crate::error::{Error, Result};
 use crate::ir::{self, dt, ElfImage};
@@ -95,7 +98,7 @@ fn add_rpath(image: &mut ElfImage, path: &str, force: bool) -> Result<()> {
 
 /// Read an ELF file's e_machine, or None if it isn't a readable ELF. Reads only
 /// the leading header bytes so probing large shared libraries stays cheap.
-fn elf_machine(path: &std::path::Path) -> Option<u16> {
+fn elf_machine(path: &Path) -> Option<u16> {
     use std::io::Read;
     let mut head = [0u8; 20];
     std::fs::File::open(path).ok()?.read_exact(&mut head).ok()?;
@@ -137,7 +140,7 @@ fn shrink_rpath(image: &mut ElfImage, mods: &Modifiers) -> Result<()> {
             if found[j] {
                 continue;
             }
-            if elf_machine(&std::path::Path::new(dir).join(lib)) == Some(machine) {
+            if elf_machine(&Path::new(dir).join(lib)) == Some(machine) {
                 found[j] = true;
                 dir_useful = true;
             }
@@ -234,7 +237,7 @@ fn build_resolution_cache(image: &mut ElfImage) -> Result<()> {
         return Ok(());
     }
 
-    let mut cache: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    let mut cache: BTreeMap<String, String> = BTreeMap::new();
     let mut add = |lib: &str, val: String| {
         let e = cache.entry(lib.to_string()).or_default();
         if !e.is_empty() {
@@ -245,8 +248,7 @@ fn build_resolution_cache(image: &mut ElfImage) -> Result<()> {
     for dir in &dirs {
         // Tokens ($ORIGIN, ...) and glibc-hwcaps dirs can't be resolved at
         // patch time, so record the directory as a hint instead.
-        let unresolvable =
-            dir.contains('$') || std::path::Path::new(dir).join("glibc-hwcaps").exists();
+        let unresolvable = dir.contains('$') || Path::new(dir).join("glibc-hwcaps").exists();
         // A DT_NEEDED with a slash is opened directly, bypassing the run path.
         for lib in needed.iter().filter(|l| !l.contains('/')) {
             if unresolvable {
@@ -353,12 +355,12 @@ fn add_note_section(image: &mut ElfImage, desc: &[u8]) -> Result<()> {
 
 /// Parse a symbol rename map: whitespace-separated `old new` pairs, one per
 /// line, blank lines ignored (the patchelf NAME_MAP_FILE format).
-fn parse_symbol_map(path: &std::path::Path) -> Result<std::collections::BTreeMap<String, String>> {
+fn parse_symbol_map(path: &Path) -> Result<BTreeMap<String, String>> {
     let text = std::fs::read_to_string(path).map_err(|source| Error::Io {
         path: path.to_path_buf(),
         source,
     })?;
-    let mut map = std::collections::BTreeMap::new();
+    let mut map = BTreeMap::new();
     for line in text.lines() {
         let mut it = line.split_whitespace();
         match (it.next(), it.next()) {

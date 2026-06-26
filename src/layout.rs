@@ -12,7 +12,7 @@
 use crate::codec;
 use crate::constraints;
 use crate::error::{Error, Result};
-use crate::ir::{dt, et, pf, pt, sht, ElfImage, Phdr};
+use crate::ir::{dt, et, pf, pt, sht, Class, ElfImage, Endian, Phdr};
 use crate::serialize;
 
 fn round_up(v: u64, align: u64) -> u64 {
@@ -260,7 +260,7 @@ fn any_field(
     width: usize,
     pred: impl Fn(u64) -> bool,
 ) -> bool {
-    let big = image.enc.endian == crate::ir::Endian::Big;
+    let big = image.enc.endian == Endian::Big;
     image.section_data[sec].chunks_exact(stride).any(|r| {
         let b = &r[fo..fo + width];
         let v = match width {
@@ -292,7 +292,7 @@ fn assert_no_address_refs(image: &ElfImage, ranges: &[(u64, u64)]) -> Result<()>
         return Ok(());
     }
     let hits = |v: u64| ranges.iter().any(|&(a, sz)| v >= a && v < a + sz);
-    let elf64 = image.enc.class == crate::ir::Class::Elf64;
+    let elf64 = image.enc.class == Class::Elf64;
     let ptr = if elf64 { 8 } else { 4 };
     // r_offset is the first field of Elf_Rel/Elf_Rela. st_value sits at offset
     // 8 (Elf64_Sym) or 4 (Elf32_Sym).
