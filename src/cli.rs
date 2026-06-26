@@ -69,6 +69,15 @@ fn val(p: &mut lexopt::Parser) -> Result<String> {
     resolve(&s)
 }
 
+/// A path-valued option. Unlike `val` it keeps the raw OS string, since
+/// filesystem paths need not be valid UTF-8.
+fn path_val(p: &mut lexopt::Parser) -> Result<PathBuf> {
+    let v = p
+        .value()
+        .map_err(|e| Error::Cli(format!("missing argument: {e}")))?;
+    Ok(PathBuf::from(v))
+}
+
 pub enum Parsed {
     Run(Args),
     Help,
@@ -131,24 +140,15 @@ where
             Long("print-execstack") => args.ops.push(Operation::PrintExecstack),
             Long("clear-execstack") => args.ops.push(Operation::ClearExecstack),
             Long("set-execstack") => args.ops.push(Operation::SetExecstack),
-            Long("rename-dynamic-symbols") => {
-                let v = p
-                    .value()
-                    .map_err(|e| Error::Cli(format!("missing argument: {e}")))?;
-                args.ops
-                    .push(Operation::RenameDynamicSymbols(PathBuf::from(v)));
-            }
+            Long("rename-dynamic-symbols") => args
+                .ops
+                .push(Operation::RenameDynamicSymbols(path_val(&mut p)?)),
             // We never reorder program or section headers (new entries are
             // appended in place), which is exactly what --no-sort requests, so
             // it is accepted as a no-op.
             Long("no-sort") => {}
             Long("no-clobber-old-sections") => args.no_clobber_old_sections = true,
-            Long("output") => {
-                let v = p
-                    .value()
-                    .map_err(|e| Error::Cli(format!("missing argument: {e}")))?;
-                args.output = Some(PathBuf::from(v));
-            }
+            Long("output") => args.output = Some(path_val(&mut p)?),
             Long("debug") => args.debug = true,
             Long("help") | Short('h') => return Ok(Parsed::Help),
             Long("version") => return Ok(Parsed::Version),
