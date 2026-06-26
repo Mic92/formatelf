@@ -15,6 +15,15 @@ use crate::ir::{dt, et, pf, pt, shf, sht, Class, ElfImage, Phdr};
 use crate::serialize;
 use crate::verify;
 
+/// A section relocated by relayout: its old address range and new address, used
+/// to rebase the dynamic tags that pointed into it.
+struct MovedSection {
+    idx: usize,
+    old_addr: u64,
+    old_size: u64,
+    new_addr: u64,
+}
+
 fn round_up(v: u64, align: u64) -> u64 {
     if align <= 1 {
         v
@@ -198,14 +207,21 @@ fn relayout(
     let total = start_off + needed + 1;
 
     // Moving a section to a new address corrupts anything that referenced its
-    // old address by value. We only fix DT_* tags, so refuse to relocate a
-    // section that relocations or symbols point into.
-    let moved: Vec<(u64, u64)> = relocate
+    // old address by value. We fix DT_* tags below, so refuse to relocate a
+    // section that relocations or symbols point into. Capture each moved
+    // section's old (addr, size) now, before the layout loop overwrites them.
+    let moves: Vec<MovedSection> = relocate
         .iter()
-        .map(|&i| (image.shdrs[i].addr, image.shdrs[i].size))
-        .filter(|&(addr, _)| addr != 0)
+        .map(|&i| MovedSection {
+            idx: i,
+            old_addr: image.shdrs[i].addr,
+            old_size: image.shdrs[i].size,
+            new_addr: 0,
+        })
+        .filter(|m| m.old_addr != 0)
         .collect();
-    assert_no_address_refs(image, &moved)?;
+    let ranges: Vec<(u64, u64)> = moves.iter().map(|m| (m.old_addr, m.old_size)).collect();
+    assert_no_address_refs(image, &ranges)?;
 
     // The ld-cache note moves with the appended region, so remember which
     // PT_NOTE covers it now (the file is still consistent) to re-anchor it
@@ -230,6 +246,13 @@ fn relayout(
         image.shdrs[i].size = len;
         cur += round_up(len, sec_align);
     }
+    let moves: Vec<MovedSection> = moves
+        .into_iter()
+        .map(|m| MovedSection {
+            new_addr: image.shdrs[m.idx].addr,
+            ..m
+        })
+        .collect();
 
     image.phdrs.push(Phdr {
         p_type: pt::LOAD,
@@ -243,7 +266,7 @@ fn relayout(
     });
 
     sync_segments(image, ldcache_phdr);
-    fixup_dynamic_addrs(image);
+    fixup_dynamic_addrs(image, &moves);
     sync_dynamic(image)?;
 
     verify::run(image)?;
@@ -354,29 +377,48 @@ fn set_segment(p: &mut Phdr, off: u64, addr: u64, size: u64) {
     p.memsz = size;
 }
 
-/// Update DT_* entries whose value is the address/size of a moved section.
-/// Sections that did not move resolve to their unchanged address, so these
-/// assignments are no-ops for them.
-fn fixup_dynamic_addrs(image: &mut ElfImage) {
-    let addr = |name: &str| image.find_section(name).map(|i| image.shdrs[i].addr);
-    let size = |name: &str| image.find_section(name).map(|i| image.shdrs[i].size);
-    let dynstr_addr = addr(".dynstr");
-    let dynstr_size = size(".dynstr");
-    let map: &[(i64, Option<u64>)] = &[
-        (dt::STRTAB, dynstr_addr),
-        (dt::STRSZ, dynstr_size),
-        (dt::SYMTAB, addr(".dynsym")),
-        (dt::HASH, addr(".hash")),
-        (dt::GNU_HASH, addr(".gnu.hash")),
-        (dt::VERNEED, addr(".gnu.version_r")),
-        (dt::VERSYM, addr(".gnu.version")),
-        (dt::JMPREL, addr(".rela.plt").or_else(|| addr(".rel.plt"))),
-        (dt::RELA, addr(".rela.dyn")),
-        (dt::REL, addr(".rel.dyn")),
+/// Rebase the address-valued dynamic tags that point into a relocated section,
+/// then refresh DT_STRSZ. The tag set mirrors glibc's ADJUST_DYN_INFO plus the
+/// init/fini and array pointers: anything the loader treats as an address. By
+/// keying on the old address range rather than a section name, every moved
+/// section is handled, not just the few an operation is known to touch.
+fn fixup_dynamic_addrs(image: &mut ElfImage, moves: &[MovedSection]) {
+    const ADDR_TAGS: &[i64] = &[
+        dt::HASH,
+        dt::PLTGOT,
+        dt::STRTAB,
+        dt::SYMTAB,
+        dt::RELA,
+        dt::REL,
+        dt::JMPREL,
+        dt::VERSYM,
+        dt::VERNEED,
+        dt::VERDEF,
+        dt::GNU_HASH,
+        dt::RELR,
+        dt::INIT,
+        dt::FINI,
+        dt::INIT_ARRAY,
+        dt::FINI_ARRAY,
+        dt::PREINIT_ARRAY,
     ];
     for d in &mut image.dynamic {
-        if let Some((_, Some(v))) = map.iter().find(|(t, _)| *t == d.tag) {
-            d.val = *v;
+        if !ADDR_TAGS.contains(&d.tag) {
+            continue;
+        }
+        if let Some(m) = moves
+            .iter()
+            .find(|m| d.val >= m.old_addr && d.val < m.old_addr + m.old_size)
+        {
+            d.val = m.new_addr + (d.val - m.old_addr);
+        }
+    }
+    // DT_STRSZ tracks the .dynstr size, the one string table that can grow.
+    if let Some(size) = image.find_section(".dynstr").map(|i| image.shdrs[i].size) {
+        for d in &mut image.dynamic {
+            if d.tag == dt::STRSZ {
+                d.val = size;
+            }
         }
     }
 }

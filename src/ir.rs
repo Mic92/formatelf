@@ -167,15 +167,23 @@ pub mod df1 {
 pub mod dt {
     pub const NULL: i64 = 0;
     pub const NEEDED: i64 = 1;
+    pub const PLTGOT: i64 = 3;
     pub const HASH: i64 = 4;
     pub const STRTAB: i64 = 5;
     pub const SYMTAB: i64 = 6;
     pub const RELA: i64 = 7;
     pub const STRSZ: i64 = 10;
+    pub const INIT: i64 = 12;
+    pub const FINI: i64 = 13;
     pub const SONAME: i64 = 14;
     pub const RPATH: i64 = 15;
     pub const REL: i64 = 17;
     pub const JMPREL: i64 = 23;
+    pub const INIT_ARRAY: i64 = 25;
+    pub const FINI_ARRAY: i64 = 26;
+    pub const PREINIT_ARRAY: i64 = 32;
+    pub const RELR: i64 = 36;
+    pub const VERDEF: i64 = 0x6fff_fffc;
     pub const DEBUG: i64 = 21;
     pub const RUNPATH: i64 = 29;
     pub const FLAGS_1: i64 = 0x6fff_fffb;
