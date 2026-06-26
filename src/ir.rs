@@ -77,18 +77,19 @@ pub mod sht {
     pub const STRTAB: u32 = 3;
     pub const RELA: u32 = 4;
     pub const DYNAMIC: u32 = 6;
+    pub const NOTE: u32 = 7;
     pub const NOBITS: u32 = 8;
     pub const REL: u32 = 9;
     pub const DYNSYM: u32 = 11;
 }
 
+pub mod shf {
+    pub const ALLOC: u64 = 0x2;
+}
+
 pub mod et {
     pub const EXEC: u16 = 2;
     pub const DYN: u16 = 3;
-}
-
-pub mod sht_extra {
-    pub const NOTE: u32 = 7;
 }
 
 pub mod pt {

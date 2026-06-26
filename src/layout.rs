@@ -11,7 +11,7 @@
 
 use crate::codec;
 use crate::error::{Error, Result};
-use crate::ir::{dt, et, pf, pt, sht, Class, ElfImage, Endian, Phdr};
+use crate::ir::{dt, et, pf, pt, shf, sht, Class, ElfImage, Endian, Phdr};
 use crate::serialize;
 use crate::verify;
 
@@ -299,11 +299,10 @@ fn assert_no_address_refs(image: &ElfImage, ranges: &[(u64, u64)]) -> Result<()>
     let (rel_stride, rela_stride) = if elf64 { (16, 24) } else { (8, 12) };
     let (sym_stride, sym_off) = if elf64 { (24, 8) } else { (16, 4) };
 
-    const SHF_ALLOC: u64 = 0x2;
     for (i, s) in image.shdrs.iter().enumerate() {
         // Only loaded tables matter at runtime; .symtab and friends are not
         // mapped and legitimately carry stale STT_SECTION values after a move.
-        if s.flags & SHF_ALLOC == 0 {
+        if s.flags & shf::ALLOC == 0 {
             continue;
         }
         let referenced = match s.sh_type {

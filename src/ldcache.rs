@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::error::{Error, Result};
-use crate::ir::{self, dt, ElfImage};
+use crate::ir::{self, dt, shf, sht, ElfImage};
 use crate::ops::{needed, require_dynamic};
 
 pub fn build(image: &mut ElfImage) -> Result<()> {
@@ -73,8 +73,6 @@ pub fn build(image: &mut ElfImage) -> Result<()> {
 /// the layout engine assigns its address and the covering PT_LOAD.
 fn add_note_section(image: &mut ElfImage, desc: &[u8]) -> Result<()> {
     const NT_NIXOS_LD_CACHE: u32 = 0x63a8_6cb6;
-    const SHT_NOTE: u32 = 7;
-    const SHF_ALLOC: u64 = 2;
     let big = image.enc.endian == ir::Endian::Big;
     let u32b = |v: u32| {
         if big {
@@ -119,8 +117,8 @@ fn add_note_section(image: &mut ElfImage, desc: &[u8]) -> Result<()> {
 
     image.shdrs.push(ir::Shdr {
         name: name_off,
-        sh_type: SHT_NOTE,
-        flags: SHF_ALLOC,
+        sh_type: sht::NOTE,
+        flags: shf::ALLOC,
         addr: 0,
         offset: 0,
         size: 0, // 0 vs the data length marks the section for placement

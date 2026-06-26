@@ -4,10 +4,7 @@
 
 use crate::codec;
 use crate::error::{Error, Result};
-use crate::ir::{dt, pt, DynEntry, Ehdr, ElfImage, Encoding, Phdr, Shdr};
-
-const SHT_NOBITS: u32 = 8;
-const SHT_DYNAMIC: u32 = 6;
+use crate::ir::{dt, pt, sht, DynEntry, Ehdr, ElfImage, Encoding, Phdr, Shdr};
 
 fn slice<'a>(data: &'a [u8], off: u64, len: u64, what: &str) -> Result<&'a [u8]> {
     let off = off as usize;
@@ -38,7 +35,7 @@ pub fn parse(data: &[u8]) -> Result<ElfImage> {
 
     let mut section_data = Vec::with_capacity(shdrs.len());
     for s in &shdrs {
-        if s.sh_type == SHT_NOBITS {
+        if s.sh_type == sht::NOBITS {
             section_data.push(Vec::new());
         } else {
             section_data.push(slice(data, s.offset, s.size, "section")?.to_vec());
@@ -85,7 +82,7 @@ fn recover_dynstr(
     shdrs: &[Shdr],
     dynamic: &[DynEntry],
 ) -> Option<Vec<u8>> {
-    let has_section = shdrs.iter().any(|s| s.sh_type == SHT_DYNAMIC);
+    let has_section = shdrs.iter().any(|s| s.sh_type == sht::DYNAMIC);
     if has_section || dynamic.is_empty() {
         return None;
     }
@@ -150,7 +147,7 @@ fn read_dynamic(
     phdrs: &[Phdr],
 ) -> Result<Vec<DynEntry>> {
     let dsize = codec::dyn_size(enc.class) as u64;
-    if let Some(dyn_sh) = shdrs.iter().find(|s| s.sh_type == SHT_DYNAMIC) {
+    if let Some(dyn_sh) = shdrs.iter().find(|s| s.sh_type == sht::DYNAMIC) {
         if dyn_sh.size % dsize != 0 {
             return Err(Error::Parse("malformed .dynamic".into()));
         }
