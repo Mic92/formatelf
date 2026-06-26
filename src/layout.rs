@@ -10,10 +10,10 @@
 //! at the start for very old kernels; we relocate it like the library path.
 
 use crate::codec;
-use crate::constraints;
 use crate::error::{Error, Result};
 use crate::ir::{dt, et, pf, pt, sht, Class, ElfImage, Endian, Phdr};
 use crate::serialize;
+use crate::verify;
 
 fn round_up(v: u64, align: u64) -> u64 {
     if align <= 1 {
@@ -80,7 +80,7 @@ pub fn finalize(
             eprintln!("patchelf: no section grew; rewriting in place");
         }
         sync_dynamic(image)?;
-        constraints::validate(image)?;
+        verify::run(image)?;
         let total = original.len() as u64;
         return serialize::write(image, original, total);
     }
@@ -246,7 +246,7 @@ fn relayout(
     fixup_dynamic_addrs(image);
     sync_dynamic(image)?;
 
-    constraints::validate(image)?;
+    verify::run(image)?;
     serialize::write(image, original, total)
 }
 

@@ -8,7 +8,7 @@ fn fail(msg: impl Into<String>) -> Error {
     Error::Serialize(msg.into())
 }
 
-pub fn validate(image: &ElfImage) -> Result<()> {
+pub fn run(image: &ElfImage) -> Result<()> {
     let loads: Vec<_> = image
         .phdrs
         .iter()

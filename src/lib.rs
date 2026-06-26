@@ -1,6 +1,5 @@
 pub mod cli;
 pub mod codec;
-pub mod constraints;
 pub mod error;
 pub mod ir;
 pub mod layout;
@@ -8,3 +7,4 @@ pub mod ops;
 pub mod parser;
 pub mod serialize;
 pub mod symbols;
+pub mod verify;
