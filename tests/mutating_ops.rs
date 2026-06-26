@@ -171,17 +171,17 @@ fn force_rpath_uses_dt_rpath_tag() {
         out(&reference, "--print-rpath", &bin).trim(),
         "/forced/path/longlonglong"
     );
-    let img = patchelf_rs::parser::parse(&std::fs::read(&bin).unwrap()).unwrap();
+    let img = formatelf::parser::parse(&std::fs::read(&bin).unwrap()).unwrap();
     assert!(
         img.dynamic
             .iter()
-            .any(|d| d.tag == patchelf_rs::ir::dt::RPATH),
+            .any(|d| d.tag == formatelf::ir::dt::RPATH),
         "expected DT_RPATH after --force-rpath"
     );
     assert!(
         !img.dynamic
             .iter()
-            .any(|d| d.tag == patchelf_rs::ir::dt::RUNPATH),
+            .any(|d| d.tag == formatelf::ir::dt::RUNPATH),
         "DT_RUNPATH should have been converted"
     );
     assert!(Command::new(&bin).status().unwrap().success());
@@ -223,18 +223,18 @@ fn no_default_lib_sets_flag() {
     }
     let bin = copy("exe-dyn-le", "nodeflib");
     patch(&bin, &["--no-default-lib"]);
-    let img = patchelf_rs::parser::parse(&std::fs::read(&bin).unwrap()).unwrap();
+    let img = formatelf::parser::parse(&std::fs::read(&bin).unwrap()).unwrap();
     let flags1 = img
         .dynamic
         .iter()
-        .find(|d| d.tag == patchelf_rs::ir::dt::FLAGS_1)
+        .find(|d| d.tag == formatelf::ir::dt::FLAGS_1)
         .expect("DT_FLAGS_1 present");
-    assert_ne!(flags1.val & patchelf_rs::ir::df1::NODEFLIB, 0);
+    assert_ne!(flags1.val & formatelf::ir::df1::NODEFLIB, 0);
 }
 
 #[test]
 fn add_debug_tag_inserts_exactly_one() {
-    use patchelf_rs::ir::dt;
+    use formatelf::ir::dt;
     if !fixtures::zig_available() {
         eprintln!("skipping: zig not on PATH");
         return;
@@ -242,15 +242,15 @@ fn add_debug_tag_inserts_exactly_one() {
     // The fixture already has a DT_DEBUG; strip it, then applying the op twice
     // must leave exactly one.
     let orig = std::fs::read(sample("exe-dyn-le")).unwrap();
-    let mut img = patchelf_rs::parser::parse(&orig).unwrap();
+    let mut img = formatelf::parser::parse(&orig).unwrap();
     img.dynamic.retain(|d| d.tag != dt::DEBUG);
 
-    let mut report = patchelf_rs::ops::Report { lines: vec![] };
+    let mut report = formatelf::ops::Report { lines: vec![] };
     for _ in 0..2 {
-        patchelf_rs::ops::apply(
+        formatelf::ops::apply(
             &mut img,
-            &patchelf_rs::cli::Operation::AddDebugTag,
-            &patchelf_rs::ops::Modifiers::default(),
+            &formatelf::cli::Operation::AddDebugTag,
+            &formatelf::ops::Modifiers::default(),
             &mut report,
         )
         .unwrap();
@@ -305,8 +305,8 @@ fn clear_symbol_version_matches_reference() {
     assert!(r.success());
 
     // The .gnu.version arrays must match byte-for-byte.
-    let a = patchelf_rs::parser::parse(&std::fs::read(&bin_ours).unwrap()).unwrap();
-    let b = patchelf_rs::parser::parse(&std::fs::read(&bin_ref).unwrap()).unwrap();
+    let a = formatelf::parser::parse(&std::fs::read(&bin_ours).unwrap()).unwrap();
+    let b = formatelf::parser::parse(&std::fs::read(&bin_ref).unwrap()).unwrap();
     let ai = a.find_section(".gnu.version").unwrap();
     let bi = b.find_section(".gnu.version").unwrap();
     assert_eq!(a.section_data[ai], b.section_data[bi]);
@@ -327,10 +327,10 @@ fn print_needed_works_without_section_headers() {
     let bin = Path::new(env!("CARGO_TARGET_TMPDIR")).join("no-shdr.so");
     std::fs::write(&bin, &data).unwrap();
 
-    let img = patchelf_rs::parser::parse(&std::fs::read(&bin).unwrap()).unwrap();
+    let img = formatelf::parser::parse(&std::fs::read(&bin).unwrap()).unwrap();
     assert!(img.shdrs.is_empty(), "section headers should be gone");
 
-    let out = Command::new(env!("CARGO_BIN_EXE_patchelf"))
+    let out = Command::new(env!("CARGO_BIN_EXE_formatelf"))
         .args(["--print-needed"])
         .arg(&bin)
         .output()
@@ -362,7 +362,7 @@ fn print_interpreter_works_without_section_headers() {
     let bin = Path::new(env!("CARGO_TARGET_TMPDIR")).join("no-shdr-exe");
     std::fs::write(&bin, &data).unwrap();
 
-    let out = Command::new(env!("CARGO_BIN_EXE_patchelf"))
+    let out = Command::new(env!("CARGO_BIN_EXE_formatelf"))
         .args(["--print-interpreter"])
         .arg(&bin)
         .output()
@@ -384,10 +384,10 @@ fn repeated_patching_reuses_the_appended_region() {
     let bin = copy("exe-dyn-le", "coalesce");
 
     let load_count = |p: &Path| {
-        let img = patchelf_rs::parser::parse(&std::fs::read(p).unwrap()).unwrap();
+        let img = formatelf::parser::parse(&std::fs::read(p).unwrap()).unwrap();
         img.phdrs
             .iter()
-            .filter(|h| h.p_type == patchelf_rs::ir::pt::LOAD)
+            .filter(|h| h.p_type == formatelf::ir::pt::LOAD)
             .count()
     };
 
@@ -419,14 +419,14 @@ fn rename_dynamic_symbols_matches_reference() {
     let src = sample("exe-dyn-le");
 
     // First dynamic symbol with a plain name, found via our own parser.
-    let img = patchelf_rs::parser::parse(&std::fs::read(&src).unwrap()).unwrap();
+    let img = formatelf::parser::parse(&std::fs::read(&src).unwrap()).unwrap();
     let dynsym = img.find_section(".dynsym").unwrap();
     let dynstr = img.find_section(".dynstr").unwrap();
     let name = (0..img.section_data[dynsym].len() / 24)
         .filter_map(|i| {
             let b = &img.section_data[dynsym][i * 24..];
             let st_name = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
-            patchelf_rs::ir::cstr(&img.section_data[dynstr], st_name)
+            formatelf::ir::cstr(&img.section_data[dynstr], st_name)
         })
         .find(|n| n.bytes().next().is_some_and(|c| c.is_ascii_alphabetic()))
         .unwrap()
@@ -445,8 +445,8 @@ fn rename_dynamic_symbols_matches_reference() {
         .unwrap()
         .success());
 
-    let a = patchelf_rs::parser::parse(&std::fs::read(&ours).unwrap()).unwrap();
-    let b = patchelf_rs::parser::parse(&std::fs::read(&theirs).unwrap()).unwrap();
+    let a = formatelf::parser::parse(&std::fs::read(&ours).unwrap()).unwrap();
+    let b = formatelf::parser::parse(&std::fs::read(&theirs).unwrap()).unwrap();
     for sec in [".dynsym", ".gnu.hash", ".hash", ".gnu.version", ".dynstr"] {
         if let (Some(i), Some(j)) = (a.find_section(sec), b.find_section(sec)) {
             assert_eq!(
@@ -485,8 +485,8 @@ fn build_resolution_cache_matches_reference() {
         .unwrap()
         .success());
 
-    let a = patchelf_rs::parser::parse(&std::fs::read(&ours).unwrap()).unwrap();
-    let b = patchelf_rs::parser::parse(&std::fs::read(&theirs).unwrap()).unwrap();
+    let a = formatelf::parser::parse(&std::fs::read(&ours).unwrap()).unwrap();
+    let b = formatelf::parser::parse(&std::fs::read(&theirs).unwrap()).unwrap();
     let ai = a.find_section(".note.nixos.ldcache").expect("note written");
     let bi = b.find_section(".note.nixos.ldcache").unwrap();
     assert_eq!(
@@ -498,7 +498,7 @@ fn build_resolution_cache_matches_reference() {
     assert!(a
         .phdrs
         .iter()
-        .any(|p| p.p_type == patchelf_rs::ir::pt::NOTE && p.vaddr == a.shdrs[ai].addr));
+        .any(|p| p.p_type == formatelf::ir::pt::NOTE && p.vaddr == a.shdrs[ai].addr));
 }
 
 #[test]
@@ -506,11 +506,11 @@ fn no_clobber_appends_a_fresh_region() {
     let Some(_reference) = guard() else { return };
     let bin = copy("exe-dyn-le", "noclobber");
     let loads = |p: &Path| {
-        patchelf_rs::parser::parse(&std::fs::read(p).unwrap())
+        formatelf::parser::parse(&std::fs::read(p).unwrap())
             .unwrap()
             .phdrs
             .iter()
-            .filter(|h| h.p_type == patchelf_rs::ir::pt::LOAD)
+            .filter(|h| h.p_type == formatelf::ir::pt::LOAD)
             .count()
     };
 
@@ -535,26 +535,26 @@ fn no_clobber_appends_a_fresh_region() {
 
 #[test]
 fn adds_gnu_stack_segment_when_absent() {
-    use patchelf_rs::ir::{pf, pt};
+    use formatelf::ir::{pf, pt};
     let orig = std::fs::read(sample("exe-dyn-le")).unwrap();
-    let mut img = patchelf_rs::parser::parse(&orig).unwrap();
+    let mut img = formatelf::parser::parse(&orig).unwrap();
     // Drop every slot the op could otherwise reuse, forcing a fresh phdr.
     img.phdrs
         .retain(|p| p.p_type != pt::GNU_STACK && p.p_type != pt::NULL);
     let before = img.phdrs.len();
 
-    let mut report = patchelf_rs::ops::Report { lines: vec![] };
-    patchelf_rs::ops::apply(
+    let mut report = formatelf::ops::Report { lines: vec![] };
+    formatelf::ops::apply(
         &mut img,
-        &patchelf_rs::cli::Operation::SetExecstack,
-        &patchelf_rs::ops::Modifiers::default(),
+        &formatelf::cli::Operation::SetExecstack,
+        &formatelf::ops::Modifiers::default(),
         &mut report,
     )
     .unwrap();
     assert_eq!(img.phdrs.len(), before + 1, "a new phdr should be appended");
 
-    let bytes = patchelf_rs::layout::finalize(&mut img, &orig, None, false, false).unwrap();
-    let out = patchelf_rs::parser::parse(&bytes).unwrap();
+    let bytes = formatelf::layout::finalize(&mut img, &orig, None, false, false).unwrap();
+    let out = formatelf::parser::parse(&bytes).unwrap();
     let gs = out
         .phdrs
         .iter()
@@ -567,7 +567,7 @@ fn adds_gnu_stack_segment_when_absent() {
 }
 
 fn ldcache_note(p: &Path) -> Vec<u8> {
-    let img = patchelf_rs::parser::parse(&std::fs::read(p).unwrap()).unwrap();
+    let img = formatelf::parser::parse(&std::fs::read(p).unwrap()).unwrap();
     let i = img
         .find_section(".note.nixos.ldcache")
         .expect("ld-cache note written");
@@ -630,7 +630,7 @@ fn build_resolution_cache_joins_multiple_dirs() {
 
 #[test]
 fn build_resolution_cache_refreshes_in_place() {
-    use patchelf_rs::ir::pt;
+    use formatelf::ir::pt;
     let Some(_reference) = guard() else { return };
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("ldcache-refresh-dir");
     std::fs::create_dir_all(&dir).unwrap();
@@ -647,7 +647,7 @@ fn build_resolution_cache_refreshes_in_place() {
     patch(&bin, &["--add-needed", "libfoo.so.1"]);
     patch(&bin, &["--build-resolution-cache"]);
 
-    let img = patchelf_rs::parser::parse(&std::fs::read(&bin).unwrap()).unwrap();
+    let img = formatelf::parser::parse(&std::fs::read(&bin).unwrap()).unwrap();
     let notes: Vec<usize> = (0..img.shdrs.len())
         .filter(|&i| img.section_name(i) == Some(".note.nixos.ldcache"))
         .collect();

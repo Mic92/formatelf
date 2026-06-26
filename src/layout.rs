@@ -86,7 +86,7 @@ pub fn finalize(
     let phdrs_grew = image.phdrs.len() > orig_phnum;
     if grown.is_empty() && !phdrs_grew {
         if debug {
-            eprintln!("patchelf: no section grew; rewriting in place");
+            eprintln!("formatelf: no section grew; rewriting in place");
         }
         sync_dynamic(image)?;
         verify::run(image)?;
@@ -94,7 +94,7 @@ pub fn finalize(
         return serialize::write(image, original, total);
     }
     if debug {
-        eprintln!("patchelf: {} section(s) grew; relaying out", grown.len());
+        eprintln!("formatelf: {} section(s) grew; relaying out", grown.len());
     }
     let reclaim = !no_clobber;
     if image.ehdr.e_type != et::DYN && image.ehdr.e_type != et::EXEC {

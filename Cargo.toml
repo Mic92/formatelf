@@ -1,16 +1,16 @@
 [package]
-name = "patchelf-rs"
+name = "formatelf"
 version = "0.0.0"
 edition = "2021"
 description = "Modify the dynamic linker and RPATH of ELF executables"
 license = "MIT"
 
 [lib]
-name = "patchelf_rs"
+name = "formatelf"
 path = "src/lib.rs"
 
 [[bin]]
-name = "patchelf"
+name = "formatelf"
 path = "src/main.rs"
 test = false
 

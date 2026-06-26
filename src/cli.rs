@@ -201,7 +201,7 @@ mod tests {
     use super::*;
 
     fn os(args: &[&str]) -> Vec<std::ffi::OsString> {
-        std::iter::once(std::ffi::OsString::from("patchelf"))
+        std::iter::once(std::ffi::OsString::from("formatelf"))
             .chain(args.iter().map(std::ffi::OsString::from))
             .collect()
     }
@@ -240,7 +240,7 @@ mod tests {
 
     #[test]
     fn at_file_indirection() {
-        let dir = std::env::temp_dir().join("patchelf_rs_cli_test");
+        let dir = std::env::temp_dir().join("formatelf_cli_test");
         std::fs::create_dir_all(&dir).unwrap();
         let f = dir.join("rpath");
         std::fs::write(&f, "/from/file").unwrap();

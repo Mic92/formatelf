@@ -48,7 +48,7 @@ fn check(arch: &str, qemu: &str, hello: &str, glibc_lib: &str) {
     std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o700);
     std::fs::set_permissions(&bin, perms).unwrap();
 
-    let patched = Command::new(env!("CARGO_BIN_EXE_patchelf"))
+    let patched = Command::new(env!("CARGO_BIN_EXE_formatelf"))
         .args([
             "--set-rpath",
             "/opt/cross/relayout/forces/a/long/enough/rpath/xxxx",

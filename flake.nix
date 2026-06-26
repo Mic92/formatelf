@@ -1,5 +1,5 @@
 {
-  description = "patchelf-rs dev shell";
+  description = "formatelf dev shell";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 

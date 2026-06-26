@@ -15,5 +15,5 @@ fuzz_target!(|data: &[u8]| {
     let args = args
         .into_iter()
         .map(|a| std::ffi::OsString::from(a.trim_start_matches('@')));
-    let _ = patchelf_rs::cli::parse(args);
+    let _ = formatelf::cli::parse(args);
 });

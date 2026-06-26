@@ -4,8 +4,8 @@
 
 mod fixtures;
 
-use patchelf_rs::codec;
-use patchelf_rs::parser;
+use formatelf::codec;
+use formatelf::parser;
 
 fn check(path: &std::path::Path) {
     let data = std::fs::read(path).unwrap();

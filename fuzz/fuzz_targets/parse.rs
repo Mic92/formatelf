@@ -6,8 +6,8 @@
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    if let Ok(mut img) = patchelf_rs::parser::parse(data) {
-        let _ = patchelf_rs::verify::run(&img);
-        let _ = patchelf_rs::layout::finalize(&mut img, data, None, false, false);
+    if let Ok(mut img) = formatelf::parser::parse(data) {
+        let _ = formatelf::verify::run(&img);
+        let _ = formatelf::layout::finalize(&mut img, data, None, false, false);
     }
 });

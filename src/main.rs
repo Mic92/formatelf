@@ -1,7 +1,7 @@
 use std::process::ExitCode;
 
-use patchelf_rs::cli::{self, Parsed};
-use patchelf_rs::error::{self, Error};
+use formatelf::cli::{self, Parsed};
+use formatelf::error::{self, Error};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -18,18 +18,18 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Ok(Parsed::Version) => {
-            println!("patchelf-rs {VERSION}");
+            println!("formatelf {VERSION}");
             ExitCode::SUCCESS
         }
         Ok(Parsed::Run(args)) => match run(args) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
-                eprintln!("patchelf: {e}");
+                eprintln!("formatelf: {e}");
                 ExitCode::FAILURE
             }
         },
         Err(e) => {
-            eprintln!("patchelf: {e}");
+            eprintln!("formatelf: {e}");
             ExitCode::FAILURE
         }
     }
@@ -41,7 +41,7 @@ fn run(args: cli::Args) -> error::Result<()> {
     }
 
     let mutating = args.ops.iter().any(|o| !is_read_only(o));
-    let mut mods = patchelf_rs::ops::Modifiers {
+    let mut mods = formatelf::ops::Modifiers {
         debug: args.debug,
         ..Default::default()
     };
@@ -64,20 +64,20 @@ fn run(args: cli::Args) -> error::Result<()> {
             path: file.clone(),
             source,
         })?;
-        let mut image = patchelf_rs::parser::parse(&data)?;
+        let mut image = formatelf::parser::parse(&data)?;
         let t = image.ehdr.e_type;
-        if t != patchelf_rs::ir::et::EXEC && t != patchelf_rs::ir::et::DYN {
+        if t != formatelf::ir::et::EXEC && t != formatelf::ir::et::DYN {
             return Err(Error::Unsupported("wrong ELF type".into()));
         }
-        let mut report = patchelf_rs::ops::Report::default();
+        let mut report = formatelf::ops::Report::default();
         for op in &args.ops {
-            patchelf_rs::ops::apply(&mut image, op, &mods, &mut report)?;
+            formatelf::ops::apply(&mut image, op, &mods, &mut report)?;
         }
         for line in report.lines {
             println!("{line}");
         }
         if mutating {
-            let bytes = patchelf_rs::layout::finalize(
+            let bytes = formatelf::layout::finalize(
                 &mut image,
                 &data,
                 args.page_size,

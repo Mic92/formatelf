@@ -9,8 +9,8 @@ use std::sync::OnceLock;
 
 use arbitrary::Unstructured;
 use libfuzzer_sys::fuzz_target;
-use patchelf_rs::cli::Operation;
-use patchelf_rs::ops::{Modifiers, Report};
+use formatelf::cli::Operation;
+use formatelf::ops::{Modifiers, Report};
 
 /// Drop the section-header table (zeroing e_shoff/e_shnum/e_shstrndx) so the
 /// parser must recover .dynstr/.interp from segments, exercising the
@@ -24,11 +24,11 @@ fn strip_sections(mut data: Vec<u8>) -> Vec<u8> {
 }
 
 /// Real binaries to mutate, loaded once. The test fixtures live in the main
-/// crate's target dir; PATCHELF_FUZZ_FIXTURES overrides the location.
+/// crate's target dir; FORMATELF_FUZZ_FIXTURES overrides the location.
 fn bases() -> &'static [Vec<u8>] {
     static BASES: OnceLock<Vec<Vec<u8>>> = OnceLock::new();
     BASES.get_or_init(|| {
-        let dir = std::env::var("PATCHELF_FUZZ_FIXTURES").unwrap_or_else(|_| {
+        let dir = std::env::var("FORMATELF_FUZZ_FIXTURES").unwrap_or_else(|_| {
             format!("{}/../target/tmp/elf-fixtures", env!("CARGO_MANIFEST_DIR"))
         });
         let files: Vec<Vec<u8>> = std::fs::read_dir(dir)
@@ -78,7 +78,7 @@ fuzz_target!(|data: &[u8]| {
     }
     let mut u = Unstructured::new(data);
     let Ok(base) = u.choose(bases) else { return };
-    let Ok(mut img) = patchelf_rs::parser::parse(base) else {
+    let Ok(mut img) = formatelf::parser::parse(base) else {
         return;
     };
 
@@ -90,18 +90,18 @@ fuzz_target!(|data: &[u8]| {
     let mut report = Report { lines: Vec::new() };
     for _ in 0..8 {
         let Ok(op) = arb_op(&mut u) else { break };
-        let _ = patchelf_rs::ops::apply(&mut img, &op, &mods, &mut report);
+        let _ = formatelf::ops::apply(&mut img, &op, &mods, &mut report);
     }
 
     // Symbol renaming takes a map directly, bypassing the CLI's file read.
     if let Ok(pairs) = u.arbitrary::<Vec<(String, String)>>() {
         let map: BTreeMap<_, _> = pairs.into_iter().collect();
-        let _ = patchelf_rs::symbols::rename_dynamic_symbols(&mut img, &map);
+        let _ = formatelf::symbols::rename_dynamic_symbols(&mut img, &map);
     }
 
-    if let Ok(bytes) = patchelf_rs::layout::finalize(&mut img, base, None, false, false) {
+    if let Ok(bytes) = formatelf::layout::finalize(&mut img, base, None, false, false) {
         // Whatever we emit must round-trip and hold our invariants.
-        let out = patchelf_rs::parser::parse(&bytes).expect("our output must re-parse");
-        let _ = patchelf_rs::verify::run(&out);
+        let out = formatelf::parser::parse(&bytes).expect("our output must re-parse");
+        let _ = formatelf::verify::run(&out);
     }
 });

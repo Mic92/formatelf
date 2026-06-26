@@ -3,7 +3,7 @@
 
 mod fixtures;
 
-use patchelf_rs::{parser, serialize};
+use formatelf::{parser, serialize};
 
 #[test]
 fn identity_roundtrip() {

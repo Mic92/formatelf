@@ -37,9 +37,9 @@ const SPECS: &[(&str, &str, &[&str])] = &[
     ),
 ];
 
-/// The patchelf binary under test.
+/// The formatelf binary under test.
 pub fn ours() -> &'static Path {
-    Path::new(env!("CARGO_BIN_EXE_patchelf"))
+    Path::new(env!("CARGO_BIN_EXE_formatelf"))
 }
 
 /// Run a read-only op on `file` and return its stdout, asserting success.
@@ -64,7 +64,7 @@ pub fn copy(name: &str, suffix: &str) -> PathBuf {
     dst
 }
 
-/// Apply our patchelf to `file`, asserting success.
+/// Apply our formatelf to `file`, asserting success.
 pub fn patch(file: &Path, args: &[&str]) {
     let st = Command::new(ours()).args(args).arg(file).status().unwrap();
     assert!(st.success(), "patch {args:?} failed");
@@ -87,8 +87,8 @@ pub fn guard() -> Option<PathBuf> {
 /// The loader resolves dynamic strings via DT_STRTAB's address, not the section
 /// header, so after a relayout DT_STRTAB must point at the relocated .dynstr.
 pub fn assert_dynstr_synced(file: &Path) {
-    use patchelf_rs::ir::dt;
-    let img = patchelf_rs::parser::parse(&std::fs::read(file).unwrap()).unwrap();
+    use formatelf::ir::dt;
+    let img = formatelf::parser::parse(&std::fs::read(file).unwrap()).unwrap();
     let strtab = img
         .dynamic
         .iter()

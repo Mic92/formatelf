@@ -36,7 +36,7 @@ pub fn apply(
     report: &mut Report,
 ) -> Result<()> {
     if mods.debug {
-        eprintln!("patchelf: applying {op:?}");
+        eprintln!("formatelf: applying {op:?}");
     }
     match op {
         Operation::PrintInterpreter => report.push(interpreter(image)?),

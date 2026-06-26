@@ -18,9 +18,9 @@ fn run<S: Strategy>(cases: u32, s: S, f: impl Fn(S::Value) -> Result<(), TestCas
 /// Drive the full read path; a hostile input either fails to parse or survives
 /// verification and re-serialization without panicking.
 fn exercise(data: &[u8]) {
-    if let Ok(mut img) = patchelf_rs::parser::parse(data) {
-        let _ = patchelf_rs::verify::run(&img);
-        let _ = patchelf_rs::layout::finalize(&mut img, data, None, false, false);
+    if let Ok(mut img) = formatelf::parser::parse(data) {
+        let _ = formatelf::verify::run(&img);
+        let _ = formatelf::layout::finalize(&mut img, data, None, false, false);
     }
 }
 
@@ -44,7 +44,7 @@ fn huge_section_count_is_rejected() {
     put16(&mut data, 60, 0); // e_shnum = 0 triggers the escape
     put64(&mut data, 64 + 32, u64::MAX); // section 0 sh_size = absurd count
 
-    assert!(patchelf_rs::parser::parse(&data).is_err());
+    assert!(formatelf::parser::parse(&data).is_err());
 }
 
 /// Regression: verify computed PT_LOAD memory ranges as `vaddr + memsz`, which
@@ -70,8 +70,8 @@ fn verify_does_not_overflow_on_huge_segment() {
     put64(&mut data, 64 + 16, u64::MAX - 0xff); // p_vaddr
     put64(&mut data, 64 + 40, 0x1000); // p_memsz -> vaddr + memsz overflows
 
-    let img = patchelf_rs::parser::parse(&data).expect("header parses");
-    let _ = patchelf_rs::verify::run(&img); // must return, not panic
+    let img = formatelf::parser::parse(&data).expect("header parses");
+    let _ = formatelf::verify::run(&img); // must return, not panic
 }
 
 #[test]

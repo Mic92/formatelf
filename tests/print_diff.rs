@@ -34,7 +34,7 @@ fn print_ops_match_c_patchelf() {
         eprintln!("skipping: reference patchelf not built");
         return;
     };
-    let ours = Path::new(env!("CARGO_BIN_EXE_patchelf"));
+    let ours = Path::new(env!("CARGO_BIN_EXE_formatelf"));
 
     for file in fixtures::samples() {
         for op in PRINT_OPS {

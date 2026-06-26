@@ -1,7 +1,7 @@
 # Separate workspace so the fuzz instrumentation never leaks into the main
 # crate's normal builds.
 [package]
-name = "patchelf-rs-fuzz"
+name = "formatelf-fuzz"
 version = "0.0.0"
 edition = "2021"
 publish = false
@@ -13,7 +13,7 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 arbitrary = "1"
 
-[dependencies.patchelf-rs]
+[dependencies.formatelf]
 path = ".."
 
 [[bin]]
