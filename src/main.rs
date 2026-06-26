@@ -79,7 +79,7 @@ fn run(args: cli::Args) -> error::Result<()> {
         if mutating {
             let bytes = patchelf_rs::layout::finalize(
                 &mut image,
-                data,
+                &data,
                 args.page_size,
                 args.debug,
                 args.no_clobber_old_sections,

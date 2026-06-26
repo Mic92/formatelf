@@ -16,14 +16,18 @@ struct Span {
 }
 
 /// Encode the headers and section data into placed spans. The layout engine
-/// must already have assigned every offset and synced section sizes.
-fn owned_spans(image: &ElfImage) -> Result<Vec<Span>> {
+/// must already have assigned every offset and synced section sizes. A region
+/// that already matches the input is dropped: the gap copy reproduces it, so
+/// the resulting spans are exactly the file's delta from the original.
+fn owned_spans(image: &ElfImage, original: &[u8]) -> Result<Vec<Span>> {
     let enc = image.enc;
     let mut spans = Vec::new();
     let mut push = |at: u64, bytes: Vec<u8>| {
-        if !bytes.is_empty() {
-            spans.push(Span { at, bytes });
+        let a = at as usize;
+        if bytes.is_empty() || original.get(a..a + bytes.len()) == Some(bytes.as_slice()) {
+            return;
         }
+        spans.push(Span { at, bytes });
     };
 
     let mut ehdr = Vec::new();
@@ -65,7 +69,7 @@ fn owned_spans(image: &ElfImage) -> Result<Vec<Span>> {
 }
 
 pub fn write(image: &ElfImage, original: &[u8], total: u64) -> Result<Vec<u8>> {
-    let mut spans = owned_spans(image)?;
+    let mut spans = owned_spans(image, original)?;
     spans.sort_by_key(|s| s.at);
 
     let orig_len = original.len() as u64;

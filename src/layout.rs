@@ -65,7 +65,7 @@ fn grown_sections(image: &ElfImage) -> Vec<usize> {
 
 pub fn finalize(
     image: &mut ElfImage,
-    original: Vec<u8>,
+    original: &[u8],
     page_size: Option<u64>,
     debug: bool,
     no_clobber: bool,
@@ -73,7 +73,7 @@ pub fn finalize(
     let grown = grown_sections(image);
     // A pushed program header (e.g. a new PT_GNU_STACK) does not grow any
     // section but still needs the PHT relocated to make room.
-    let orig_phnum = codec::read_ehdr(&original)?.2 as usize;
+    let orig_phnum = codec::read_ehdr(original)?.2 as usize;
     let phdrs_grew = image.phdrs.len() > orig_phnum;
     if grown.is_empty() && !phdrs_grew {
         if debug {
@@ -82,7 +82,7 @@ pub fn finalize(
         sync_dynamic(image)?;
         constraints::validate(image)?;
         let total = original.len() as u64;
-        return serialize::write(image, &original, total);
+        return serialize::write(image, original, total);
     }
     if debug {
         eprintln!("patchelf: {} section(s) grew; relaying out", grown.len());
@@ -113,7 +113,7 @@ fn page_size_for(image: &ElfImage, forced: Option<u64>) -> u64 {
 
 fn relayout(
     image: &mut ElfImage,
-    original: Vec<u8>,
+    original: &[u8],
     grown: Vec<usize>,
     page_size: Option<u64>,
     reclaim: bool,
@@ -247,7 +247,7 @@ fn relayout(
     sync_dynamic(image)?;
 
     constraints::validate(image)?;
-    serialize::write(image, &original, total)
+    serialize::write(image, original, total)
 }
 
 /// True if any fixed-stride record in `sec` has its `width`-byte field at

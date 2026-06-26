@@ -568,7 +568,7 @@ fn adds_gnu_stack_segment_when_absent() {
     .unwrap();
     assert_eq!(img.phdrs.len(), before + 1, "a new phdr should be appended");
 
-    let bytes = patchelf_rs::layout::finalize(&mut img, orig, None, false, false).unwrap();
+    let bytes = patchelf_rs::layout::finalize(&mut img, &orig, None, false, false).unwrap();
     let out = patchelf_rs::parser::parse(&bytes).unwrap();
     let gs = out
         .phdrs
