@@ -1,5 +1,5 @@
 {
-  description = "formatelf dev shell";
+  description = "Modify the dynamic linker and RPATH of ELF executables";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -16,6 +16,10 @@
       isLinux = system: nixpkgs.lib.hasSuffix "-linux" system;
     in
     {
+      packages = forAll (pkgs: {
+        default = pkgs.callPackage ./package.nix { };
+      });
+
       devShells = forAll (
         pkgs:
         {

@@ -161,7 +161,7 @@ where
 }
 
 pub const HELP: &str = "\
-syntax: patchelf
+syntax: formatelf
   [--set-interpreter FILENAME]
   [--page-size SIZE]
   [--print-interpreter]

@@ -1,6 +1,6 @@
 [package]
 name = "formatelf"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2021"
 description = "Modify the dynamic linker and RPATH of ELF executables"
 license = "MIT"
