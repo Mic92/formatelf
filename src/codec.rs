@@ -62,73 +62,46 @@ pub fn read_ehdr(data: &[u8]) -> Result<(Ehdr, Encoding, u16, u16)> {
     let e = endianness(endian);
     let mut ident = [0u8; 16];
     ident.copy_from_slice(&data[..16]);
-    let common = |e_type,
-                  machine,
-                  version,
-                  entry,
-                  phoff,
-                  shoff,
-                  flags,
-                  ehsize,
-                  phentsize,
-                  shentsize,
-                  shstrndx| Ehdr {
-        e_type,
-        machine,
-        version,
-        entry,
-        phoff,
-        shoff,
-        flags,
-        ehsize,
-        phentsize,
-        shentsize,
-        shstrndx,
-        os_abi: data[7],
-        abi_version: data[8],
-        ident,
-    };
-
     let (ehdr, phnum, shnum) = match class {
         Class::Elf64 => {
             let h: &elf::FileHeader64<Endianness> = pod(data)?;
-            (
-                common(
-                    h.e_type.get(e),
-                    h.e_machine.get(e),
-                    h.e_version.get(e),
-                    h.e_entry.get(e),
-                    h.e_phoff.get(e),
-                    h.e_shoff.get(e),
-                    h.e_flags.get(e),
-                    h.e_ehsize.get(e),
-                    h.e_phentsize.get(e),
-                    h.e_shentsize.get(e),
-                    h.e_shstrndx.get(e) as u32,
-                ),
-                h.e_phnum.get(e),
-                h.e_shnum.get(e),
-            )
+            let ehdr = Ehdr {
+                e_type: h.e_type.get(e),
+                machine: h.e_machine.get(e),
+                version: h.e_version.get(e),
+                entry: h.e_entry.get(e),
+                phoff: h.e_phoff.get(e),
+                shoff: h.e_shoff.get(e),
+                flags: h.e_flags.get(e),
+                ehsize: h.e_ehsize.get(e),
+                phentsize: h.e_phentsize.get(e),
+                shentsize: h.e_shentsize.get(e),
+                shstrndx: h.e_shstrndx.get(e) as u32,
+                os_abi: data[7],
+                abi_version: data[8],
+                ident,
+            };
+            (ehdr, h.e_phnum.get(e), h.e_shnum.get(e))
         }
         Class::Elf32 => {
             let h: &elf::FileHeader32<Endianness> = pod(data)?;
-            (
-                common(
-                    h.e_type.get(e),
-                    h.e_machine.get(e),
-                    h.e_version.get(e),
-                    h.e_entry.get(e) as u64,
-                    h.e_phoff.get(e) as u64,
-                    h.e_shoff.get(e) as u64,
-                    h.e_flags.get(e),
-                    h.e_ehsize.get(e),
-                    h.e_phentsize.get(e),
-                    h.e_shentsize.get(e),
-                    h.e_shstrndx.get(e) as u32,
-                ),
-                h.e_phnum.get(e),
-                h.e_shnum.get(e),
-            )
+            let ehdr = Ehdr {
+                e_type: h.e_type.get(e),
+                machine: h.e_machine.get(e),
+                version: h.e_version.get(e),
+                entry: h.e_entry.get(e) as u64,
+                phoff: h.e_phoff.get(e) as u64,
+                shoff: h.e_shoff.get(e) as u64,
+                flags: h.e_flags.get(e),
+                ehsize: h.e_ehsize.get(e),
+                phentsize: h.e_phentsize.get(e),
+                shentsize: h.e_shentsize.get(e),
+                shstrndx: h.e_shstrndx.get(e) as u32,
+                os_abi: data[7],
+                abi_version: data[8],
+                ident,
+            };
+            (ehdr, h.e_phnum.get(e), h.e_shnum.get(e))
         }
     };
 
