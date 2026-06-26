@@ -191,10 +191,18 @@ fn relayout(
     let pht_size = round_up(new_phnum * phdr_size + ehdr_size, sec_align);
     let sht_size = round_up(image.shdrs.len() as u64 * shdr_size, sec_align);
 
-    let mut needed = pht_size + sht_size;
+    // Region offset of each relocated section, honoring its sh_addralign (at
+    // least sec_align). region_vaddr is page-aligned, so an aligned offset
+    // yields an aligned address. The same pass sizes the region and places the
+    // sections below, so the two cannot disagree.
+    let mut cur = pht_size + sht_size;
+    let mut region_offsets = Vec::with_capacity(relocate.len());
     for &i in &relocate {
-        needed += round_up(section_len(image, i), sec_align);
+        cur = round_up(cur, sec_align.max(image.shdrs[i].addralign.max(1)));
+        region_offsets.push(cur);
+        cur += section_len(image, i);
     }
+    let needed = cur;
 
     // The kernel passes AT_PHDR = base_vaddr + e_phoff, and the loader derives
     // its load bias from PT_PHDR.vaddr, so every byte in the appended region
@@ -235,16 +243,14 @@ fn relayout(
             .position(|p| p.p_type == pt::NOTE && p.offset == off)
     });
 
-    // Lay out the appended region: PHT, SHT, then the relocated sections.
+    // Lay out the appended region: PHT, SHT, then the relocated sections at the
+    // offsets assigned above.
     image.ehdr.phoff = start_off;
     image.ehdr.shoff = start_off + pht_size;
-    let mut cur = start_off + pht_size + sht_size;
-    for &i in &relocate {
-        let len = section_len(image, i);
-        image.shdrs[i].offset = cur;
-        image.shdrs[i].addr = region_vaddr + (cur - start_off);
-        image.shdrs[i].size = len;
-        cur += round_up(len, sec_align);
+    for (&i, &rel_off) in relocate.iter().zip(&region_offsets) {
+        image.shdrs[i].offset = start_off + rel_off;
+        image.shdrs[i].addr = region_vaddr + rel_off;
+        image.shdrs[i].size = section_len(image, i);
     }
     let moves: Vec<MovedSection> = moves
         .into_iter()
