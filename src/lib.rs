@@ -3,6 +3,7 @@ pub mod codec;
 pub mod error;
 pub mod ir;
 pub mod layout;
+pub mod ldcache;
 pub mod ops;
 pub mod parser;
 pub mod serialize;
