@@ -148,19 +148,28 @@ fn rebuild_gnu_hash(
     }
     let count = nsyms - symndx;
 
-    // hash, bucket and original position for each hashed symbol.
-    let mut entries: Vec<(u32, usize, usize)> = (0..count)
-        .map(|pos| {
-            let name = sym_name(image, dynsym, dynstr, symsize, symndx + pos);
-            let h = gnu_hash(&name);
-            (h, h as usize % num_buckets, pos)
+    struct Entry {
+        hash: u32,
+        bucket: usize,
+        old_pos: usize,
+    }
+    let mut entries: Vec<Entry> = (0..count)
+        .map(|old_pos| {
+            let name = sym_name(image, dynsym, dynstr, symsize, symndx + old_pos);
+            let hash = gnu_hash(&name);
+            Entry {
+                hash,
+                bucket: hash as usize % num_buckets,
+                old_pos,
+            }
         })
         .collect();
-    entries.sort_by_key(|e| e.1);
+    // A GNU hash table requires the hashed symbols grouped by bucket.
+    entries.sort_by_key(|e| e.bucket);
 
     let mut old2new = vec![0usize; count];
     for (new_i, e) in entries.iter().enumerate() {
-        old2new[e.2] = new_i;
+        old2new[e.old_pos] = new_i;
     }
 
     reorder_records(
@@ -179,26 +188,28 @@ fn rebuild_gnu_hash(
     for b in &mut data[bloom_off..buckets_off] {
         *b = 0;
     }
-    for &(h, _, _) in &entries {
-        let idx = (h / wordbits) as usize % maskwords;
+    for e in &entries {
+        let idx = (e.hash / wordbits) as usize % maskwords;
         let o = bloom_off + idx * word;
         let mut v = rd_uptr(big, elf64, data, o);
-        v |= 1u64 << (h % wordbits);
-        v |= 1u64 << ((h >> shift2) % wordbits);
+        v |= 1u64 << (e.hash % wordbits);
+        v |= 1u64 << ((e.hash >> shift2) % wordbits);
         wr_uptr(big, elf64, data, o, v);
     }
     for b in &mut data[buckets_off..table_off] {
         *b = 0;
     }
-    for (new_i, &(_, bucket, _)) in entries.iter().enumerate() {
-        let o = buckets_off + bucket * 4;
+    // First symbol of each bucket; later symbols chain from it.
+    for (new_i, e) in entries.iter().enumerate() {
+        let o = buckets_off + e.bucket * 4;
         if rd_u32(big, data, o) == 0 {
             wr_u32(big, data, o, (new_i + symndx) as u32);
         }
     }
-    for (new_i, &(h, bucket, _)) in entries.iter().enumerate() {
-        let last = new_i + 1 == count || entries[new_i + 1].1 != bucket;
-        let v = if last { h | 1 } else { h & !1 };
+    // Chain word per symbol: low bit set marks the last entry in a bucket.
+    for (new_i, e) in entries.iter().enumerate() {
+        let last = new_i + 1 == count || entries[new_i + 1].bucket != e.bucket;
+        let v = if last { e.hash | 1 } else { e.hash & !1 };
         wr_u32(big, data, table_off + new_i * 4, v);
     }
     Ok(())
