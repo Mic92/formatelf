@@ -661,12 +661,39 @@ fn build_resolution_cache_refreshes_in_place() {
     );
 }
 
-/// After a relayout that moves .dynamic, the MIPS run-time-loader-debug offset
-/// (DT_MIPS_RLD_MAP_REL) must still resolve to .rld_map, and PT_MIPS_ABIFLAGS
-/// must still cover .MIPS.abiflags.
+/// DT_MIPS_RLD_MAP_REL stores the offset from its own slot to .rld_map, so it
+/// must satisfy `value == rld_map_addr - slot_offset - dynamic_addr` in the
+/// emitted binary regardless of how .dynamic was rewritten.
+fn assert_rld_map_rel_valid(bin: &Path) {
+    use formatelf::ir::{dt, sht, Class};
+    let img = formatelf::parser::parse(&std::fs::read(bin).unwrap()).unwrap();
+    let sec_addr = |i: usize| img.shdrs[i].addr;
+    let dyn_addr = sec_addr(
+        img.shdrs
+            .iter()
+            .position(|s| s.sh_type == sht::DYNAMIC)
+            .unwrap(),
+    );
+    let rld = sec_addr(img.find_section(".rld_map").unwrap());
+    let stride = if img.enc.class == Class::Elf32 { 8 } else { 16 };
+    let (i, e) = img
+        .dynamic
+        .iter()
+        .enumerate()
+        .find(|(_, d)| d.tag == dt::MIPS_RLD_MAP_REL)
+        .expect("fixture must carry DT_MIPS_RLD_MAP_REL");
+    let mut expect = rld.wrapping_sub(i as u64 * stride).wrapping_sub(dyn_addr);
+    if img.enc.class == Class::Elf32 {
+        expect &= 0xffff_ffff;
+    }
+    assert_eq!(e.val, expect, "DT_MIPS_RLD_MAP_REL offset is stale");
+}
+
+/// A relayout that moves .dynamic must recompute DT_MIPS_RLD_MAP_REL and keep
+/// PT_MIPS_ABIFLAGS anchored to .MIPS.abiflags.
 #[test]
 fn mips_relayout_fixes_arch_specific_fields() {
-    use formatelf::ir::{dt, pt, sht};
+    use formatelf::ir::pt;
     if !fixtures::zig_available() {
         return;
     }
@@ -674,38 +701,9 @@ fn mips_relayout_fixes_arch_specific_fields() {
     // Adds a DT_NEEDED entry and a .dynstr string, growing both and forcing a
     // relayout that relocates .dynamic.
     patch(&bin, &["--add-needed", "libextra.so.1"]);
+    assert_rld_map_rel_valid(&bin);
 
     let img = formatelf::parser::parse(&std::fs::read(&bin).unwrap()).unwrap();
-    let addr = |name: &str| img.shdrs[img.find_section(name).unwrap()].addr;
-    let dyn_addr = img.shdrs[img
-        .shdrs
-        .iter()
-        .position(|s| s.sh_type == sht::DYNAMIC)
-        .unwrap()]
-    .addr;
-    let dyn_stride = if img.enc.class == formatelf::ir::Class::Elf32 {
-        8
-    } else {
-        16
-    };
-    let rld = addr(".rld_map");
-    let (i, e) = img
-        .dynamic
-        .iter()
-        .enumerate()
-        .find(|(_, d)| d.tag == dt::MIPS_RLD_MAP_REL)
-        .expect("fixture must carry DT_MIPS_RLD_MAP_REL");
-    let mut expect = rld
-        .wrapping_sub(i as u64 * dyn_stride)
-        .wrapping_sub(dyn_addr);
-    if img.enc.class == formatelf::ir::Class::Elf32 {
-        expect &= 0xffff_ffff;
-    }
-    assert_eq!(
-        e.val, expect,
-        "DT_MIPS_RLD_MAP_REL not recomputed after move"
-    );
-
     let af = img.find_section(".MIPS.abiflags").unwrap();
     let seg = img
         .phdrs
@@ -718,4 +716,16 @@ fn mips_relayout_fixes_arch_specific_fields() {
     );
     assert_eq!(seg.offset, img.shdrs[af].offset);
     assert_eq!(seg.filesz, img.shdrs[af].size);
+}
+
+/// Removing a dynamic entry ahead of DT_MIPS_RLD_MAP_REL shifts its slot up,
+/// changing the slot-relative offset even though nothing is relocated.
+#[test]
+fn mips_remove_needed_fixes_rld_map_rel() {
+    if !fixtures::zig_available() {
+        return;
+    }
+    let bin = copy("exe-mips-be", "mips-remove");
+    patch(&bin, &["--remove-needed", "libc.so.6"]);
+    assert_rld_map_rel_valid(&bin);
 }

@@ -88,6 +88,9 @@ pub fn finalize(
         if debug {
             eprintln!("formatelf: no section grew; rewriting in place");
         }
+        // Removing entries shifts later slots, so the slot-relative
+        // DT_MIPS_RLD_MAP_REL offset can change without any section moving.
+        fixup_mips_rld_map_rel(image);
         sync_dynamic(image)?;
         verify::run(image)?;
         let total = original.len() as u64;
