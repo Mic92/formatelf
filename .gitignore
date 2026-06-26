@@ -1,3 +1,4 @@
 /target
+/mutants.out*
 Cargo.lock
 /tests/samples/.zig-cache

@@ -99,9 +99,14 @@ pub fn assert_dynstr_synced(file: &Path) {
     assert_eq!(strtab, dynstr, "DT_STRTAB not synced to moved .dynstr");
 }
 
-/// Path to the reference C patchelf, if it has been built.
+/// Path to the reference C patchelf, if it has been built. PATCHELF_REFERENCE
+/// overrides the default relative path so tools that build in a copy of the
+/// tree (e.g. cargo-mutants) can still locate it.
 pub fn c_patchelf() -> Option<PathBuf> {
-    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../patchelf/src/patchelf");
+    let p = match std::env::var_os("PATCHELF_REFERENCE") {
+        Some(p) => PathBuf::from(p),
+        None => PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../patchelf/src/patchelf"),
+    };
     p.exists().then_some(p)
 }
 

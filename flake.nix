@@ -26,6 +26,7 @@
               pkgs.clippy
               pkgs.rustfmt
               pkgs.zig
+              pkgs.cargo-mutants
             ];
           };
         }

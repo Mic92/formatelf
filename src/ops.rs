@@ -269,7 +269,15 @@ fn add_debug_tag(image: &mut ElfImage) -> Result<()> {
 }
 
 fn set_os_abi(image: &mut ElfImage, name: &str) -> Result<()> {
-    let abi = match name.trim().to_ascii_lowercase().as_str() {
+    let abi = abi_code(name).ok_or_else(|| Error::Cli("unrecognized OS ABI".into()))?;
+    image.ehdr.ident[7] = abi; // EI_OSABI; written verbatim by the codec
+    image.ehdr.os_abi = abi;
+    Ok(())
+}
+
+/// EI_OSABI code for a human name, or None if unrecognized.
+fn abi_code(name: &str) -> Option<u8> {
+    Some(match name.trim().to_ascii_lowercase().as_str() {
         "system v" | "system-v" | "sysv" => 0,
         "hp-ux" => 1,
         "netbsd" => 2,
@@ -282,11 +290,8 @@ fn set_os_abi(image: &mut ElfImage, name: &str) -> Result<()> {
         "tru64" => 10,
         "openbsd" => 12,
         "openvms" => 13,
-        _ => return Err(Error::Cli("unrecognized OS ABI".into())),
-    };
-    image.ehdr.ident[7] = abi; // EI_OSABI; written verbatim by the codec
-    image.ehdr.os_abi = abi;
-    Ok(())
+        _ => return None,
+    })
 }
 
 /// Toggle PF_X on PT_GNU_STACK. When the segment is absent, reuse a spare
@@ -294,24 +299,17 @@ fn set_os_abi(image: &mut ElfImage, name: &str) -> Result<()> {
 /// relocates the program header table to make room). PT_GNU_STACK carries no
 /// file content, so a fresh entry needs no offset/address assignment.
 fn modify_execstack(image: &mut ElfImage, set: bool) -> Result<()> {
-    let flip = |flags: u32| {
-        if set {
-            flags | ir::pf::X
-        } else {
-            flags & !ir::pf::X
-        }
-    };
     if let Some(p) = image
         .phdrs
         .iter_mut()
         .find(|p| p.p_type == ir::pt::GNU_STACK)
     {
-        p.flags = flip(p.flags);
+        p.flags = with_execstack(p.flags, set);
         return Ok(());
     }
     let new = ir::Phdr {
         p_type: ir::pt::GNU_STACK,
-        flags: flip(ir::pf::R | ir::pf::W),
+        flags: with_execstack(ir::pf::R | ir::pf::W, set),
         offset: 0,
         vaddr: 0,
         paddr: 0,
@@ -374,8 +372,21 @@ pub(crate) fn needed(image: &ElfImage) -> Result<Vec<String>> {
         .collect())
 }
 
+/// Set or clear PF_X, leaving the other flag bits untouched.
+fn with_execstack(flags: u32, set: bool) -> u32 {
+    if set {
+        flags | ir::pf::X
+    } else {
+        flags & !ir::pf::X
+    }
+}
+
 fn execstack(image: &ElfImage) -> char {
-    match image.phdrs.iter().find(|p| p.p_type == ir::pt::GNU_STACK) {
+    execstack_char(&image.phdrs)
+}
+
+fn execstack_char(phdrs: &[ir::Phdr]) -> char {
+    match phdrs.iter().find(|p| p.p_type == ir::pt::GNU_STACK) {
         Some(p) if p.flags & ir::pf::X != 0 => 'X',
         Some(_) => '-',
         None => '?',
@@ -399,4 +410,65 @@ fn os_abi_name(abi: u8) -> String {
         _ => return format!("0x{abi:02X}"),
     };
     name.to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{abi_code, execstack_char, os_abi_name, with_execstack};
+    use crate::ir::{pf, pt, Phdr};
+
+    /// Each ABI name maps to a distinct code, and that code names it back.
+    #[test]
+    fn os_abi_table_is_consistent() {
+        let table = [
+            ("sysv", 0u8, "System V"),
+            ("hp-ux", 1, "HP-UX"),
+            ("netbsd", 2, "NetBSD"),
+            ("linux", 3, "Linux"),
+            ("gnu-hurd", 4, "GNU Hurd"),
+            ("solaris", 6, "Solaris"),
+            ("aix", 7, "AIX"),
+            ("irix", 8, "IRIX"),
+            ("freebsd", 9, "FreeBSD"),
+            ("tru64", 10, "Tru64"),
+            ("openbsd", 12, "OpenBSD"),
+            ("openvms", 13, "OpenVMS"),
+        ];
+        for (name, code, display) in table {
+            assert_eq!(abi_code(name), Some(code), "code for {name}");
+            assert_eq!(os_abi_name(code), display, "name for {code}");
+        }
+        assert_eq!(abi_code("nonesuch"), None);
+        assert_eq!(os_abi_name(99), "0x63");
+    }
+
+    fn gnu_stack(flags: u32) -> Phdr {
+        Phdr {
+            p_type: pt::GNU_STACK,
+            flags,
+            offset: 0,
+            vaddr: 0,
+            paddr: 0,
+            filesz: 0,
+            memsz: 0,
+            align: 1,
+        }
+    }
+
+    #[test]
+    fn execstack_char_reflects_pf_x() {
+        assert_eq!(execstack_char(&[]), '?');
+        assert_eq!(execstack_char(&[gnu_stack(pf::R | pf::W)]), '-');
+        assert_eq!(execstack_char(&[gnu_stack(pf::R | pf::W | pf::X)]), 'X');
+    }
+
+    #[test]
+    fn with_execstack_toggles_only_pf_x() {
+        let rw = pf::R | pf::W;
+        assert_eq!(with_execstack(rw, true), rw | pf::X);
+        assert_eq!(with_execstack(rw, false), rw);
+        // Setting is idempotent, and clearing preserves the other bits.
+        assert_eq!(with_execstack(rw | pf::X, true), rw | pf::X);
+        assert_eq!(with_execstack(rw | pf::X, false), rw);
+    }
 }

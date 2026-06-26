@@ -233,20 +233,29 @@ fn no_default_lib_sets_flag() {
 }
 
 #[test]
-fn add_debug_tag_inserts_entry() {
+fn add_debug_tag_inserts_exactly_one() {
+    use patchelf_rs::ir::dt;
     if !fixtures::zig_available() {
         eprintln!("skipping: zig not on PATH");
         return;
     }
-    let bin = copy("exe-dyn-le", "debugtag");
-    patch(&bin, &["--add-debug-tag"]);
-    let img = patchelf_rs::parser::parse(&std::fs::read(&bin).unwrap()).unwrap();
-    assert!(img
-        .dynamic
-        .iter()
-        .any(|d| d.tag == patchelf_rs::ir::dt::DEBUG));
-    // Runs because DT_DEBUG is benign.
-    assert!(Command::new(&bin).status().unwrap().success());
+    // The fixture already has a DT_DEBUG; strip it, then applying the op twice
+    // must leave exactly one.
+    let orig = std::fs::read(sample("exe-dyn-le")).unwrap();
+    let mut img = patchelf_rs::parser::parse(&orig).unwrap();
+    img.dynamic.retain(|d| d.tag != dt::DEBUG);
+
+    let mut report = patchelf_rs::ops::Report { lines: vec![] };
+    for _ in 0..2 {
+        patchelf_rs::ops::apply(
+            &mut img,
+            &patchelf_rs::cli::Operation::AddDebugTag,
+            &patchelf_rs::ops::Modifiers::default(),
+            &mut report,
+        )
+        .unwrap();
+    }
+    assert_eq!(img.dynamic.iter().filter(|d| d.tag == dt::DEBUG).count(), 1);
 }
 
 #[test]
@@ -551,7 +560,8 @@ fn adds_gnu_stack_segment_when_absent() {
         .iter()
         .find(|p| p.p_type == pt::GNU_STACK)
         .expect("PT_GNU_STACK present");
-    assert_ne!(gs.flags & pf::X, 0, "stack should be executable");
+    // A fresh executable stack is exactly R|W|X.
+    assert_eq!(gs.flags, pf::R | pf::W | pf::X, "stack flags");
     // The segment carries no file content and needs no address.
     assert_eq!((gs.offset, gs.vaddr, gs.filesz, gs.memsz), (0, 0, 0, 0));
 }
