@@ -394,6 +394,37 @@ fn print_needed_works_without_section_headers() {
 }
 
 #[test]
+fn print_interpreter_works_without_section_headers() {
+    if !fixtures::zig_available() {
+        return;
+    }
+    // Strip the section header table from a dynamic executable; the
+    // interpreter must still be read from PT_INTERP. Reference patchelf
+    // refuses such a file outright.
+    let mut data = std::fs::read(sample("exe-dyn-le")).unwrap();
+    data[0x28..0x30].fill(0); // e_shoff
+    data[0x3c..0x3e].fill(0); // e_shnum
+    data[0x3e..0x40].fill(0); // e_shstrndx
+    let bin = Path::new(env!("CARGO_TARGET_TMPDIR")).join("no-shdr-exe");
+    std::fs::write(&bin, &data).unwrap();
+
+    let out = Command::new(env!("CARGO_BIN_EXE_patchelf"))
+        .args(["--print-interpreter"])
+        .arg(&bin)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8(out.stdout).unwrap().contains("ld-linux"),
+        "expected an ld.so path"
+    );
+}
+
+#[test]
 fn repeated_patching_reuses_the_appended_region() {
     let Some(_reference) = guard() else { return };
     let bin = copy("exe-dyn-le", "coalesce");

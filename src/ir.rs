@@ -207,6 +207,9 @@ pub struct ElfImage {
     /// `.dynstr` section (stripped section headers). Read-only fallback; the
     /// mutating ops still require real sections, as patchelf does.
     pub dynstr_fallback: Option<Vec<u8>>,
+    /// Interpreter path recovered from PT_INTERP when there is no `.interp`
+    /// section. Read-only fallback for stripped binaries.
+    pub interp_fallback: Option<Vec<u8>>,
 }
 
 /// Read a NUL-terminated string starting at `off` in a string table.

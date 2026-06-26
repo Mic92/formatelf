@@ -318,12 +318,15 @@ pub(crate) fn require_dynamic(image: &ElfImage) -> Result<()> {
 }
 
 fn interpreter(image: &ElfImage) -> Result<String> {
-    let idx = image
-        .find_section(".interp")
-        .ok_or_else(|| Error::Missing("cannot find section .interp".into()))?;
-    Ok(ir::cstr(&image.section_data[idx], 0)
-        .unwrap_or_default()
-        .to_owned())
+    let bytes = match image.find_section(".interp") {
+        Some(idx) => &image.section_data[idx],
+        // Stripped section headers: fall back to PT_INTERP.
+        None => image
+            .interp_fallback
+            .as_deref()
+            .ok_or_else(|| Error::Missing("cannot find section .interp".into()))?,
+    };
+    Ok(ir::cstr(bytes, 0).unwrap_or_default().to_owned())
 }
 
 /// Value of the first `tag` dynamic entry resolved against `.dynstr`.

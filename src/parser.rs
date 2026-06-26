@@ -44,6 +44,7 @@ pub fn parse(data: &[u8]) -> Result<ElfImage> {
 
     let dynamic = read_dynamic(data, enc, &shdrs, &phdrs)?;
     let dynstr_fallback = recover_dynstr(data, &phdrs, &shdrs, &dynamic);
+    let interp_fallback = recover_interp(data, &phdrs);
 
     Ok(ElfImage {
         enc,
@@ -53,6 +54,7 @@ pub fn parse(data: &[u8]) -> Result<ElfImage> {
         section_data,
         dynamic,
         dynstr_fallback,
+        interp_fallback,
     })
 }
 
@@ -90,6 +92,15 @@ fn recover_dynstr(
     let strsz = dynamic.iter().find(|d| d.tag == dt::STRSZ)?.val;
     let off = vaddr_to_off(phdrs, strtab)?;
     slice(data, off, strsz, "dynstr").ok().map(<[u8]>::to_vec)
+}
+
+/// Recover the interpreter path from PT_INTERP. interpreter() prefers the
+/// `.interp` section when present and falls back to this for stripped binaries.
+fn recover_interp(data: &[u8], phdrs: &[Phdr]) -> Option<Vec<u8>> {
+    let p = phdrs.iter().find(|p| p.p_type == pt::INTERP)?;
+    slice(data, p.offset, p.filesz, "interp")
+        .ok()
+        .map(<[u8]>::to_vec)
 }
 
 fn vaddr_to_off(phdrs: &[Phdr], vaddr: u64) -> Option<u64> {
