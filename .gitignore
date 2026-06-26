@@ -9,3 +9,6 @@ Cargo.lock
 /fuzz/corpus
 /fuzz/artifacts
 /fuzz/Cargo.lock
+/fuzz/coverage
+/fuzz/cov.profraw
+/fuzz/cov.profdata
