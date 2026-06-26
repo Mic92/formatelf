@@ -5,7 +5,7 @@ use crate::error::{Error, Result};
 use crate::ir::{dt, pf, pt, sht, ElfImage, Phdr};
 
 fn fail(msg: impl Into<String>) -> Error {
-    Error::Serialize(msg.into())
+    Error::Constraint(msg.into())
 }
 
 pub fn run(image: &ElfImage) -> Result<()> {

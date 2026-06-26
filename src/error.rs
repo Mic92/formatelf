@@ -9,9 +9,6 @@ pub enum Error {
         source: std::io::Error,
     },
 
-    #[error("not an ELF file: {0}")]
-    NotElf(PathBuf),
-
     #[error("unsupported ELF: {0}")]
     Unsupported(String),
 
@@ -23,9 +20,6 @@ pub enum Error {
 
     #[error("serialize error: {0}")]
     Serialize(String),
-
-    #[error("layout error: {0}")]
-    Layout(String),
 
     #[error("constraint violated: {0}")]
     Constraint(String),
