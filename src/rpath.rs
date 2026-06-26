@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crate::error::Result;
 use crate::ir::{self, dt, ElfImage};
-use crate::ops::{dynstr_append, dynstr_section, needed, require_dynamic, Modifiers};
+use crate::ops::{dynstr_section, dynstr_set, needed, require_dynamic, Modifiers};
 
 /// DT_RUNPATH takes precedence over the obsolete DT_RPATH.
 pub fn read(image: &ElfImage) -> Result<String> {
@@ -130,32 +130,19 @@ pub fn set(image: &mut ElfImage, new: &str, force: bool) -> Result<()> {
         }
     }
 
-    // Try an in-place overwrite when the new path fits the current slot.
-    if let Some(&first) = existing.first() {
-        let off = image.dynamic[first].val as usize;
-        let old_len = ir::cstr(&image.section_data[dynstr_idx], off as u32)
-            .map(str::len)
-            .unwrap_or(0);
-        if new.len() <= old_len {
-            let buf = &mut image.section_data[dynstr_idx];
-            buf[off..off + new.len()].copy_from_slice(new.as_bytes());
-            buf[off + new.len()] = 0;
-            return Ok(());
-        }
-    }
-
-    let str_off = dynstr_append(&mut image.section_data[dynstr_idx], new);
+    let reuse = existing.first().map(|&i| image.dynamic[i].val as usize);
+    let off = dynstr_set(&mut image.section_data[dynstr_idx], reuse, new);
     if existing.is_empty() {
         image.dynamic.insert(
             0,
             ir::DynEntry {
                 tag: convert_to,
-                val: str_off,
+                val: off,
             },
         );
     } else {
         for &i in &existing {
-            image.dynamic[i].val = str_off;
+            image.dynamic[i].val = off;
         }
     }
     Ok(())

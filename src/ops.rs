@@ -109,6 +109,21 @@ pub(crate) fn dynstr_append(buf: &mut Vec<u8>, s: &str) -> u64 {
     off
 }
 
+/// Store `s` in the dyn-string table, reusing the slot at `reuse` when `s`
+/// fits, otherwise appending. Returns the offset where `s` now lives. Reusing
+/// the slot keeps re-setting the same value free of growth (and idempotent).
+pub(crate) fn dynstr_set(buf: &mut Vec<u8>, reuse: Option<usize>, s: &str) -> u64 {
+    if let Some(off) = reuse {
+        let old_len = ir::cstr(buf, off as u32).map(str::len).unwrap_or(0);
+        if s.len() <= old_len {
+            buf[off..off + s.len()].copy_from_slice(s.as_bytes());
+            buf[off + s.len()] = 0;
+            return off as u64;
+        }
+    }
+    dynstr_append(buf, s)
+}
+
 pub(crate) fn dynstr_section(image: &ElfImage) -> Result<usize> {
     image
         .find_section(".dynstr")
@@ -132,8 +147,10 @@ fn set_soname(image: &mut ElfImage, name: &str) -> Result<()> {
     }
     require_dynamic(image)?;
     let dynstr_idx = dynstr_section(image)?;
-    let off = dynstr_append(&mut image.section_data[dynstr_idx], name);
-    match image.dynamic.iter().position(|d| d.tag == dt::SONAME) {
+    let existing = image.dynamic.iter().position(|d| d.tag == dt::SONAME);
+    let reuse = existing.map(|i| image.dynamic[i].val as usize);
+    let off = dynstr_set(&mut image.section_data[dynstr_idx], reuse, name);
+    match existing {
         Some(i) => image.dynamic[i].val = off,
         None => image.dynamic.insert(
             0,
