@@ -208,7 +208,7 @@ fn clear_symbol_version(image: &mut ElfImage, sym: &str) -> Result<()> {
         .find_section(".gnu.version")
         .ok_or_else(|| Error::Missing("cannot find section .gnu.version".into()))?;
 
-    let big = image.enc.endian == ir::Endian::Big;
+    let e = image.enc.endian;
     let sym_size = if image.enc.class == ir::Class::Elf64 {
         24
     } else {
@@ -218,25 +218,13 @@ fn clear_symbol_version(image: &mut ElfImage, sym: &str) -> Result<()> {
     if image.section_data[versym].len() < count * 2 {
         return Err(Error::Parse("versym smaller than dynsym".into()));
     }
-    let rd_u32 = |b: &[u8]| {
-        let a = [b[0], b[1], b[2], b[3]];
-        if big {
-            u32::from_be_bytes(a)
-        } else {
-            u32::from_le_bytes(a)
-        }
-    };
-    let global = if big {
-        1u16.to_be_bytes()
-    } else {
-        1u16.to_le_bytes()
-    };
 
     // st_name (u32) is the first field of both Elf32_Sym and Elf64_Sym.
+    const VER_NDX_GLOBAL: u16 = 1;
     for i in 0..count {
-        let st_name = rd_u32(&image.section_data[dynsym][i * sym_size..]);
+        let st_name = e.read_u32(&image.section_data[dynsym], i * sym_size);
         if ir::cstr(&image.section_data[dynstr], st_name) == Some(sym) {
-            image.section_data[versym][i * 2..i * 2 + 2].copy_from_slice(&global);
+            e.write_u16(&mut image.section_data[versym], i * 2, VER_NDX_GLOBAL);
         }
     }
     Ok(())

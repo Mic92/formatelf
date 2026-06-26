@@ -11,48 +11,35 @@ use std::collections::BTreeMap;
 use crate::error::{Error, Result};
 use crate::ir::{cstr, sht, Class, ElfImage, Endian};
 
-fn rd_u32(big: bool, b: &[u8], o: usize) -> u32 {
-    let a = [b[o], b[o + 1], b[o + 2], b[o + 3]];
+fn enc(big: bool) -> Endian {
     if big {
-        u32::from_be_bytes(a)
+        Endian::Big
     } else {
-        u32::from_le_bytes(a)
+        Endian::Little
     }
 }
 
+fn rd_u32(big: bool, b: &[u8], o: usize) -> u32 {
+    enc(big).read_u32(b, o)
+}
+
 fn wr_u32(big: bool, b: &mut [u8], o: usize, v: u32) {
-    let a = if big {
-        v.to_be_bytes()
-    } else {
-        v.to_le_bytes()
-    };
-    b[o..o + 4].copy_from_slice(&a);
+    enc(big).write_u32(b, o, v);
 }
 
 fn rd_uptr(big: bool, elf64: bool, b: &[u8], o: usize) -> u64 {
     if elf64 {
-        let mut a = [0u8; 8];
-        a.copy_from_slice(&b[o..o + 8]);
-        if big {
-            u64::from_be_bytes(a)
-        } else {
-            u64::from_le_bytes(a)
-        }
+        enc(big).read_u64(b, o)
     } else {
-        rd_u32(big, b, o) as u64
+        enc(big).read_u32(b, o) as u64
     }
 }
 
 fn wr_uptr(big: bool, elf64: bool, b: &mut [u8], o: usize, v: u64) {
     if elf64 {
-        let a = if big {
-            v.to_be_bytes()
-        } else {
-            v.to_le_bytes()
-        };
-        b[o..o + 8].copy_from_slice(&a);
+        enc(big).write_u64(b, o, v);
     } else {
-        wr_u32(big, b, o, v as u32);
+        enc(big).write_u32(b, o, v as u32);
     }
 }
 

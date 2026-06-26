@@ -11,7 +11,7 @@
 
 use crate::codec;
 use crate::error::{Error, Result};
-use crate::ir::{dt, et, pf, pt, shf, sht, Class, ElfImage, Endian, Phdr};
+use crate::ir::{dt, et, pf, pt, shf, sht, Class, ElfImage, Phdr};
 use crate::serialize;
 use crate::verify;
 
@@ -260,26 +260,11 @@ fn any_field(
     width: usize,
     pred: impl Fn(u64) -> bool,
 ) -> bool {
-    let big = image.enc.endian == Endian::Big;
+    let e = image.enc.endian;
     image.section_data[sec].chunks_exact(stride).any(|r| {
-        let b = &r[fo..fo + width];
         let v = match width {
-            8 => {
-                let a: [u8; 8] = b.try_into().unwrap();
-                if big {
-                    u64::from_be_bytes(a)
-                } else {
-                    u64::from_le_bytes(a)
-                }
-            }
-            _ => {
-                let a: [u8; 4] = b.try_into().unwrap();
-                if big {
-                    u32::from_be_bytes(a) as u64
-                } else {
-                    u32::from_le_bytes(a) as u64
-                }
-            }
+            8 => e.read_u64(r, fo),
+            _ => e.read_u32(r, fo) as u64,
         };
         pred(v)
     })

@@ -13,6 +13,58 @@ pub enum Endian {
     Big,
 }
 
+/// Fixed-width integer access into a byte buffer in this byte order. Panics on
+/// out-of-bounds, matching slice indexing; callers stay within sized records.
+impl Endian {
+    pub fn read_u16(self, b: &[u8], o: usize) -> u16 {
+        let a = [b[o], b[o + 1]];
+        match self {
+            Endian::Big => u16::from_be_bytes(a),
+            Endian::Little => u16::from_le_bytes(a),
+        }
+    }
+
+    pub fn read_u32(self, b: &[u8], o: usize) -> u32 {
+        let a = b[o..o + 4].try_into().unwrap();
+        match self {
+            Endian::Big => u32::from_be_bytes(a),
+            Endian::Little => u32::from_le_bytes(a),
+        }
+    }
+
+    pub fn read_u64(self, b: &[u8], o: usize) -> u64 {
+        let a = b[o..o + 8].try_into().unwrap();
+        match self {
+            Endian::Big => u64::from_be_bytes(a),
+            Endian::Little => u64::from_le_bytes(a),
+        }
+    }
+
+    pub fn write_u16(self, b: &mut [u8], o: usize, v: u16) {
+        let a = match self {
+            Endian::Big => v.to_be_bytes(),
+            Endian::Little => v.to_le_bytes(),
+        };
+        b[o..o + 2].copy_from_slice(&a);
+    }
+
+    pub fn write_u32(self, b: &mut [u8], o: usize, v: u32) {
+        let a = match self {
+            Endian::Big => v.to_be_bytes(),
+            Endian::Little => v.to_le_bytes(),
+        };
+        b[o..o + 4].copy_from_slice(&a);
+    }
+
+    pub fn write_u64(self, b: &mut [u8], o: usize, v: u64) {
+        let a = match self {
+            Endian::Big => v.to_be_bytes(),
+            Endian::Little => v.to_le_bytes(),
+        };
+        b[o..o + 8].copy_from_slice(&a);
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Encoding {
     pub class: Class,
