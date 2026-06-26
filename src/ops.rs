@@ -46,17 +46,17 @@ pub fn apply(
                 report.push(s);
             }
         }
-        Operation::PrintRpath => report.push(rpath(image)?),
+        Operation::PrintRpath => report.push(crate::rpath::read(image)?),
         Operation::PrintNeeded => {
             for lib in needed(image)? {
                 report.push(lib);
             }
         }
         Operation::PrintExecstack => report.push(format!("execstack: {}", execstack(image))),
-        Operation::RemoveRpath => remove_rpath(image),
-        Operation::SetRpath(path) => modify_rpath(image, path, mods.force_rpath)?,
-        Operation::AddRpath(path) => add_rpath(image, path, mods.force_rpath)?,
-        Operation::ShrinkRpath => shrink_rpath(image, mods)?,
+        Operation::RemoveRpath => crate::rpath::remove(image),
+        Operation::SetRpath(path) => crate::rpath::set(image, path, mods.force_rpath)?,
+        Operation::AddRpath(path) => crate::rpath::add(image, path, mods.force_rpath)?,
+        Operation::ShrinkRpath => crate::rpath::shrink(image, mods)?,
         Operation::ForceRpath | Operation::AllowedRpathPrefixes(_) => {}
         Operation::SetInterpreter(p) => set_interpreter(image, p)?,
         Operation::SetSoname(name) => set_soname(image, name)?,
@@ -79,140 +79,6 @@ pub fn apply(
 
 /// Drop DT_RPATH/DT_RUNPATH. The trailing DT_NULL is retained, so the encoded
 /// array only shrinks and the edit stays in place.
-fn remove_rpath(image: &mut ElfImage) {
-    image
-        .dynamic
-        .retain(|d| d.tag != dt::RPATH && d.tag != dt::RUNPATH);
-}
-
-/// Append `path` to the current rpath (colon-joined), then set it.
-fn add_rpath(image: &mut ElfImage, path: &str, force: bool) -> Result<()> {
-    let cur = rpath(image)?;
-    let combined = if cur.is_empty() {
-        path.to_string()
-    } else {
-        format!("{cur}:{path}")
-    };
-    modify_rpath(image, &combined, force)
-}
-
-/// Read an ELF file's e_machine, or None if it isn't a readable ELF. Reads only
-/// the leading header bytes so probing large shared libraries stays cheap.
-fn elf_machine(path: &Path) -> Option<u16> {
-    use std::io::Read;
-    let mut head = [0u8; 20];
-    std::fs::File::open(path).ok()?.read_exact(&mut head).ok()?;
-    if &head[..4] != b"\x7fELF" {
-        return None;
-    }
-    let m = [head[18], head[19]];
-    Some(if head[5] == 1 {
-        u16::from_le_bytes(m) // EI_DATA: 1 = little-endian
-    } else {
-        u16::from_be_bytes(m)
-    })
-}
-
-/// Drop rpath directories that contain none of the needed libraries (matching
-/// the binary's machine type), and any rejected by --allowed-rpath-prefixes.
-/// Non-absolute entries such as $ORIGIN are always kept.
-fn shrink_rpath(image: &mut ElfImage, mods: &Modifiers) -> Result<()> {
-    let cur = rpath(image)?;
-    if cur.is_empty() {
-        return Ok(());
-    }
-    let needed = needed(image)?;
-    let machine = image.ehdr.machine;
-    let mut found = vec![false; needed.len()];
-    let mut kept: Vec<&str> = Vec::new();
-
-    for dir in cur.split(':').filter(|s| !s.is_empty()) {
-        if !dir.starts_with('/') {
-            kept.push(dir);
-            continue;
-        }
-        let allowed = &mods.allowed_rpath_prefixes;
-        if !allowed.is_empty() && !allowed.iter().any(|p| dir.starts_with(p)) {
-            continue;
-        }
-        let mut dir_useful = false;
-        for (j, lib) in needed.iter().enumerate() {
-            if found[j] {
-                continue;
-            }
-            if elf_machine(&Path::new(dir).join(lib)) == Some(machine) {
-                found[j] = true;
-                dir_useful = true;
-            }
-        }
-        if dir_useful {
-            kept.push(dir);
-        }
-    }
-
-    let new = kept.join(":");
-    modify_rpath(image, &new, mods.force_rpath)
-}
-
-/// Set DT_RUNPATH (or DT_RPATH when `force`). Reuses the existing string slot
-/// when the new value fits, otherwise appends to .dynstr; adds the dynamic
-/// entry when absent. Growth is resolved later by the layout engine.
-fn modify_rpath(image: &mut ElfImage, new: &str, force: bool) -> Result<()> {
-    require_dynamic(image)?;
-    let dynstr_idx = dynstr_section(image)?;
-
-    let existing: Vec<usize> = image
-        .dynamic
-        .iter()
-        .take_while(|d| d.tag != dt::NULL)
-        .enumerate()
-        .filter(|(_, d)| d.tag == dt::RPATH || d.tag == dt::RUNPATH)
-        .map(|(i, _)| i)
-        .collect();
-
-    // Match patchelf's tag policy: prefer DT_RUNPATH, unless --force-rpath.
-    let has_runpath = existing
-        .iter()
-        .any(|&i| image.dynamic[i].tag == dt::RUNPATH);
-    let convert_to = if force { dt::RPATH } else { dt::RUNPATH };
-    let needs_convert = if force { has_runpath } else { !has_runpath };
-    if needs_convert {
-        for &i in &existing {
-            image.dynamic[i].tag = convert_to;
-        }
-    }
-
-    // Try an in-place overwrite when the new path fits the current slot.
-    if let Some(&first) = existing.first() {
-        let off = image.dynamic[first].val as usize;
-        let old_len = ir::cstr(&image.section_data[dynstr_idx], off as u32)
-            .map(str::len)
-            .unwrap_or(0);
-        if new.len() <= old_len {
-            let buf = &mut image.section_data[dynstr_idx];
-            buf[off..off + new.len()].copy_from_slice(new.as_bytes());
-            buf[off + new.len()] = 0;
-            return Ok(());
-        }
-    }
-
-    let str_off = dynstr_append(&mut image.section_data[dynstr_idx], new);
-    if existing.is_empty() {
-        image.dynamic.insert(
-            0,
-            ir::DynEntry {
-                tag: convert_to,
-                val: str_off,
-            },
-        );
-    } else {
-        for &i in &existing {
-            image.dynamic[i].val = str_off;
-        }
-    }
-    Ok(())
-}
-
 /// Parse a symbol rename map: whitespace-separated `old new` pairs, one per
 /// line, blank lines ignored (the patchelf NAME_MAP_FILE format).
 fn parse_symbol_map(path: &Path) -> Result<BTreeMap<String, String>> {
@@ -236,14 +102,14 @@ fn parse_symbol_map(path: &Path) -> Result<BTreeMap<String, String>> {
     Ok(map)
 }
 
-fn dynstr_append(buf: &mut Vec<u8>, s: &str) -> u64 {
+pub(crate) fn dynstr_append(buf: &mut Vec<u8>, s: &str) -> u64 {
     let off = buf.len() as u64;
     buf.extend_from_slice(s.as_bytes());
     buf.push(0);
     off
 }
 
-fn dynstr_section(image: &ElfImage) -> Result<usize> {
+pub(crate) fn dynstr_section(image: &ElfImage) -> Result<usize> {
     image
         .find_section(".dynstr")
         .ok_or_else(|| Error::Missing("cannot find section .dynstr".into()))
@@ -484,25 +350,6 @@ fn soname(image: &ElfImage) -> Option<String> {
         return None;
     }
     dyn_string(image, dt::SONAME).filter(|s| !s.is_empty())
-}
-
-/// DT_RUNPATH takes precedence over the obsolete DT_RPATH.
-fn rpath(image: &ElfImage) -> Result<String> {
-    require_dynamic(image)?;
-    let Some(strtab) = image.dynstr() else {
-        return Ok(String::new());
-    };
-    let get = |off: u64| ir::cstr(strtab, off as u32).unwrap_or_default().to_owned();
-    let mut rpath = String::new();
-    for d in &image.dynamic {
-        match d.tag {
-            dt::RUNPATH => return Ok(get(d.val)),
-            dt::RPATH => rpath = get(d.val),
-            dt::NULL => break,
-            _ => {}
-        }
-    }
-    Ok(rpath)
 }
 
 pub(crate) fn needed(image: &ElfImage) -> Result<Vec<String>> {

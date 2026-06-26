@@ -6,6 +6,7 @@ pub mod layout;
 pub mod ldcache;
 pub mod ops;
 pub mod parser;
+pub mod rpath;
 pub mod serialize;
 pub mod symbols;
 pub mod verify;
