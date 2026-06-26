@@ -35,6 +35,8 @@ const SPECS: &[(&str, &str, &[&str])] = &[
         "x86_64-linux-gnu",
         &["-shared", "-Wl,-soname,libsample.so.1"],
     ),
+    // MIPS PIE: exercises DT_MIPS_RLD_MAP_REL and the PT_MIPS_ABIFLAGS segment.
+    ("exe-mips-be", "mips-linux-gnueabi", &["-fPIE", "-pie"]),
 ];
 
 /// The formatelf binary under test.

@@ -660,3 +660,62 @@ fn build_resolution_cache_refreshes_in_place() {
         "PT_NOTE must stay anchored on the note after a move"
     );
 }
+
+/// After a relayout that moves .dynamic, the MIPS run-time-loader-debug offset
+/// (DT_MIPS_RLD_MAP_REL) must still resolve to .rld_map, and PT_MIPS_ABIFLAGS
+/// must still cover .MIPS.abiflags.
+#[test]
+fn mips_relayout_fixes_arch_specific_fields() {
+    use formatelf::ir::{dt, pt, sht};
+    if !fixtures::zig_available() {
+        return;
+    }
+    let bin = copy("exe-mips-be", "mips-relayout");
+    // Adds a DT_NEEDED entry and a .dynstr string, growing both and forcing a
+    // relayout that relocates .dynamic.
+    patch(&bin, &["--add-needed", "libextra.so.1"]);
+
+    let img = formatelf::parser::parse(&std::fs::read(&bin).unwrap()).unwrap();
+    let addr = |name: &str| img.shdrs[img.find_section(name).unwrap()].addr;
+    let dyn_addr = img.shdrs[img
+        .shdrs
+        .iter()
+        .position(|s| s.sh_type == sht::DYNAMIC)
+        .unwrap()]
+    .addr;
+    let dyn_stride = if img.enc.class == formatelf::ir::Class::Elf32 {
+        8
+    } else {
+        16
+    };
+    let rld = addr(".rld_map");
+    let (i, e) = img
+        .dynamic
+        .iter()
+        .enumerate()
+        .find(|(_, d)| d.tag == dt::MIPS_RLD_MAP_REL)
+        .expect("fixture must carry DT_MIPS_RLD_MAP_REL");
+    let mut expect = rld
+        .wrapping_sub(i as u64 * dyn_stride)
+        .wrapping_sub(dyn_addr);
+    if img.enc.class == formatelf::ir::Class::Elf32 {
+        expect &= 0xffff_ffff;
+    }
+    assert_eq!(
+        e.val, expect,
+        "DT_MIPS_RLD_MAP_REL not recomputed after move"
+    );
+
+    let af = img.find_section(".MIPS.abiflags").unwrap();
+    let seg = img
+        .phdrs
+        .iter()
+        .find(|p| p.p_type == pt::MIPS_ABIFLAGS)
+        .expect("PT_MIPS_ABIFLAGS segment");
+    assert_eq!(
+        seg.vaddr, img.shdrs[af].addr,
+        "PT_MIPS_ABIFLAGS not anchored"
+    );
+    assert_eq!(seg.offset, img.shdrs[af].offset);
+    assert_eq!(seg.filesz, img.shdrs[af].size);
+}

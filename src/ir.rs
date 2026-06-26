@@ -152,6 +152,7 @@ pub mod pt {
     pub const NOTE: u32 = 4;
     pub const PHDR: u32 = 6;
     pub const GNU_STACK: u32 = 0x6474_e551;
+    pub const MIPS_ABIFLAGS: u32 = 0x7000_0003;
 }
 
 pub mod pf {
@@ -190,6 +191,10 @@ pub mod dt {
     pub const GNU_HASH: i64 = 0x6fff_fef5;
     pub const VERNEED: i64 = 0x6fff_fffe;
     pub const VERSYM: i64 = 0x6fff_fff0;
+    // A run-time-loader-debug pointer stored as a signed offset from the tag's
+    // own address, not as an absolute address; relayout must recompute it.
+    pub const MIPS_RLD_MAP_REL: i64 = 0x7000_0035;
+    pub const MIPS_XHASH: i64 = 0x7000_0036;
 }
 
 /// Section contents owned separately so ops can grow them without fighting

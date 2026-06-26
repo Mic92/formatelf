@@ -348,6 +348,7 @@ fn sync_segments(image: &mut ElfImage, ldcache_phdr: Option<usize>) {
         (s.offset, s.addr, s.size)
     };
     let interp = image.find_section(".interp").map(extent);
+    let abiflags = image.find_section(".MIPS.abiflags").map(extent);
     let ldcache = image.find_section(".note.nixos.ldcache").map(extent);
     if let (Some(pi), Some((off, addr, size))) = (ldcache_phdr, ldcache) {
         set_segment(&mut image.phdrs[pi], off, addr, size);
@@ -367,6 +368,11 @@ fn sync_segments(image: &mut ElfImage, ldcache_phdr: Option<usize>) {
             }
             pt::DYNAMIC => {
                 if let Some((off, addr, size)) = dynamic {
+                    set_segment(p, off, addr, size);
+                }
+            }
+            pt::MIPS_ABIFLAGS => {
+                if let Some((off, addr, size)) = abiflags {
                     set_segment(p, off, addr, size);
                 }
             }
@@ -407,6 +413,7 @@ fn fixup_dynamic_addrs(image: &mut ElfImage, moves: &[MovedSection]) {
         dt::INIT_ARRAY,
         dt::FINI_ARRAY,
         dt::PREINIT_ARRAY,
+        dt::MIPS_XHASH,
     ];
     for d in &mut image.dynamic {
         if !ADDR_TAGS.contains(&d.tag) {
@@ -419,12 +426,37 @@ fn fixup_dynamic_addrs(image: &mut ElfImage, moves: &[MovedSection]) {
             d.val = m.new_addr + (d.val - m.old_addr);
         }
     }
+    fixup_mips_rld_map_rel(image);
     // DT_STRSZ tracks the .dynstr size, the one string table that can grow.
     if let Some(size) = image.find_section(".dynstr").map(|i| image.shdrs[i].size) {
         for d in &mut image.dynamic {
             if d.tag == dt::STRSZ {
                 d.val = size;
             }
+        }
+    }
+}
+
+/// DT_MIPS_RLD_MAP_REL holds the offset from the tag's own in-memory address to
+/// the .rld_map debug pointer, so it must be recomputed whenever .dynamic or
+/// .rld_map moves. Absent .rld_map, mirror patchelf and store 0.
+fn fixup_mips_rld_map_rel(image: &mut ElfImage) {
+    if !image.dynamic.iter().any(|d| d.tag == dt::MIPS_RLD_MAP_REL) {
+        return;
+    }
+    let stride = codec::dyn_size(image.enc.class) as u64;
+    let dyn_addr = dyn_idx(image).map(|i| image.shdrs[i].addr).unwrap_or(0);
+    let rld = image.find_section(".rld_map").map(|i| image.shdrs[i].addr);
+    let mask = if image.enc.class == Class::Elf32 {
+        0xffff_ffff
+    } else {
+        u64::MAX
+    };
+    for (i, d) in image.dynamic.iter_mut().enumerate() {
+        if d.tag == dt::MIPS_RLD_MAP_REL {
+            d.val = rld
+                .map(|r| r.wrapping_sub(i as u64 * stride).wrapping_sub(dyn_addr) & mask)
+                .unwrap_or(0);
         }
     }
 }
