@@ -120,9 +120,39 @@ pub fn rename_dynamic_symbols(
         wr_u32(big, image.section_data[dynsym].to_mut(), i * symsize, off);
     }
 
-    rebuild_gnu_hash(image, dynsym, dynstr, symsize, nsyms)?;
-    rebuild_sysv_hash(image, dynsym, dynstr, symsize, nsyms);
+    // Read every name once and derive both hashes; the two tables would
+    // otherwise walk the whole symbol table separately.
+    let (gnu_hashes, sysv_hashes) = symbol_hashes(image, dynsym, dynstr, symsize, nsyms);
+    let reorder = rebuild_gnu_hash(image, &gnu_hashes, nsyms)?;
+    rebuild_sysv_hash(image, &sysv_hashes, nsyms, reorder.as_ref());
     Ok(())
+}
+
+/// GNU and SysV hashes of every dynamic symbol, indexed by symbol position, in
+/// the pre-reorder order. Computed in a single pass over `.dynstr`.
+fn symbol_hashes(
+    image: &ElfImage<'_>,
+    dynsym: usize,
+    dynstr: usize,
+    symsize: usize,
+    nsyms: usize,
+) -> (Vec<u32>, Vec<u32>) {
+    let mut gnu = vec![0u32; nsyms];
+    let mut sysv = vec![0u32; nsyms];
+    for i in 0..nsyms {
+        let name = sym_name(image, dynsym, dynstr, symsize, i);
+        gnu[i] = gnu_hash(name);
+        sysv[i] = sysv_hash(name);
+    }
+    (gnu, sysv)
+}
+
+/// How rebuild_gnu_hash permuted the hashed symbols, so the SysV table can find
+/// each symbol's pre-reorder hash without re-reading names: `new2old[k]` is the
+/// old position (relative to `symndx`) of the symbol now at new position `k`.
+struct Reorder {
+    symndx: usize,
+    new2old: Vec<usize>,
 }
 
 /// Reorder the hashed symbols by bucket (a GNU hash invariant), remap every
@@ -130,13 +160,13 @@ pub fn rename_dynamic_symbols(
 /// buckets and chain.
 fn rebuild_gnu_hash(
     image: &mut ElfImage<'_>,
-    dynsym: usize,
-    dynstr: usize,
-    symsize: usize,
+    gnu_hashes: &[u32],
     nsyms: usize,
-) -> Result<()> {
+) -> Result<Option<Reorder>> {
+    let symsize = if image.enc.class == Class::Elf64 { 24 } else { 16 };
+    let dynsym = image.find_section(".dynsym").unwrap();
     let Some(gh) = image.find_section(".gnu.hash") else {
-        return Ok(());
+        return Ok(None);
     };
     let big = image.enc.endian == Endian::Big;
     let elf64 = image.enc.class == Class::Elf64;
@@ -155,7 +185,7 @@ fn rebuild_gnu_hash(
     let buckets_off = bloom_off + maskwords * word;
     let table_off = buckets_off + num_buckets * 4;
     if num_buckets == 0 || table_off > data.len() {
-        return Ok(()); // empty table: symndx is not meaningful
+        return Ok(None); // empty table: symndx is not meaningful
     }
     let count = nsyms - symndx;
 
@@ -166,7 +196,7 @@ fn rebuild_gnu_hash(
     }
     let mut entries: Vec<Entry> = (0..count)
         .map(|old_pos| {
-            let hash = gnu_hash(sym_name(image, dynsym, dynstr, symsize, symndx + old_pos));
+            let hash = gnu_hashes[symndx + old_pos];
             Entry {
                 hash,
                 bucket: hash as usize % num_buckets,
@@ -178,8 +208,10 @@ fn rebuild_gnu_hash(
     entries.sort_by_key(|e| e.bucket);
 
     let mut old2new = vec![0usize; count];
+    let mut new2old = vec![0usize; count];
     for (new_i, e) in entries.iter().enumerate() {
         old2new[e.old_pos] = new_i;
+        new2old[new_i] = e.old_pos;
     }
 
     reorder_records(
@@ -222,15 +254,14 @@ fn rebuild_gnu_hash(
         let v = if last { e.hash | 1 } else { e.hash & !1 };
         wr_u32(big, data, table_off + new_i * 4, v);
     }
-    Ok(())
+    Ok(Some(Reorder { symndx, new2old }))
 }
 
 fn rebuild_sysv_hash(
     image: &mut ElfImage<'_>,
-    dynsym: usize,
-    dynstr: usize,
-    symsize: usize,
+    sysv_hashes: &[u32],
     nsyms: usize,
+    reorder: Option<&Reorder>,
 ) {
     let Some(hash) = image.find_section(".hash") else {
         return;
@@ -249,8 +280,14 @@ fn rebuild_sysv_hash(
     let chain_off = buckets_off + num_buckets * 4;
     let first = nsyms - nchain;
 
+    // The GNU reorder permuted symbols in [symndx, nsyms); map each new slot
+    // back to its old one to reuse the pre-reorder hash.
+    let old_index = |new: usize| match reorder {
+        Some(r) if new >= r.symndx => r.symndx + r.new2old[new - r.symndx],
+        _ => new,
+    };
     let names: Vec<u32> = (first..nsyms)
-        .map(|i| sysv_hash(sym_name(image, dynsym, dynstr, symsize, i)) % num_buckets as u32)
+        .map(|i| sysv_hashes[old_index(i)] % num_buckets as u32)
         .collect();
     let data = image.section_data[hash].to_mut();
     for b in &mut data[buckets_off..buckets_off + (num_buckets + nchain) * 4] {
