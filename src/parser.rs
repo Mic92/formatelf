@@ -4,7 +4,7 @@
 
 use crate::codec;
 use crate::error::{Error, Result};
-use crate::ir::{dt, pt, sht, DynEntry, Ehdr, ElfImage, Encoding, Phdr, Shdr};
+use crate::ir::{DynEntry, Ehdr, ElfImage, Encoding, Phdr, Shdr, dt, pt, sht};
 
 fn slice<'a>(data: &'a [u8], off: u64, len: u64, what: &str) -> Result<&'a [u8]> {
     let off = off as usize;
@@ -156,10 +156,10 @@ fn resolve_counts(
         (0, Some(s)) => s.size,
         _ => raw_shnum as u64,
     };
-    if ehdr.shstrndx == codec::SHN_XINDEX as u32 {
-        if let Some(s) = &sec0 {
-            ehdr.shstrndx = s.link;
-        }
+    if ehdr.shstrndx == codec::SHN_XINDEX as u32
+        && let Some(s) = &sec0
+    {
+        ehdr.shstrndx = s.link;
     }
     Ok((phnum, shnum))
 }

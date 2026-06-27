@@ -10,7 +10,7 @@ use std::io::Write;
 
 use crate::codec;
 use crate::error::{Error, Result};
-use crate::ir::{sht, ElfImage};
+use crate::ir::{ElfImage, sht};
 
 /// A changed region placed at `at` in the output.
 struct Span<'a> {
@@ -69,10 +69,10 @@ fn owned_spans<'a>(image: &'a ElfImage<'_>, original: &[u8]) -> Result<Vec<Span<
         // A section still borrowed from the input at its original offset is
         // reproduced byte-for-byte by the gap copy, so it is not a delta. Skip
         // it by pointer identity, avoiding the memcmp push() runs otherwise.
-        if let Cow::Borrowed(slice) = data {
-            if borrowed_offset(slice, original) == Some(s.offset) {
-                continue;
-            }
+        if let Cow::Borrowed(slice) = data
+            && borrowed_offset(slice, original) == Some(s.offset)
+        {
+            continue;
         }
         push(s.offset, Cow::Borrowed(data.as_ref()));
     }

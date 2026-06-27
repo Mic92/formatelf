@@ -6,7 +6,7 @@ use std::path::Path;
 
 use crate::cli::Operation;
 use crate::error::{Error, Result};
-use crate::ir::{self, dt, ElfImage};
+use crate::ir::{self, ElfImage, dt};
 
 /// Output from `--print-*` operations.
 #[derive(Debug, Default)]
@@ -95,7 +95,7 @@ fn parse_symbol_map(path: &Path) -> Result<BTreeMap<String, String>> {
             }
             (None, _) => {}
             (Some(_), None) => {
-                return Err(Error::Cli(format!("malformed symbol map line: {line:?}")))
+                return Err(Error::Cli(format!("malformed symbol map line: {line:?}")));
             }
         }
     }
@@ -415,7 +415,7 @@ fn os_abi_name(abi: u8) -> String {
 #[cfg(test)]
 mod tests {
     use super::{abi_code, execstack_char, os_abi_name, with_execstack};
-    use crate::ir::{pf, pt, Phdr};
+    use crate::ir::{Phdr, pf, pt};
 
     /// Each ABI name maps to a distinct code, and that code names it back.
     #[test]

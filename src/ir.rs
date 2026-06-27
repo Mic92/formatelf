@@ -263,11 +263,7 @@ mod codec_tests {
     use proptest::prelude::*;
 
     fn endian(big: bool) -> Endian {
-        if big {
-            Endian::Big
-        } else {
-            Endian::Little
-        }
+        if big { Endian::Big } else { Endian::Little }
     }
 
     proptest! {

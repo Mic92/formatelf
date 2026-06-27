@@ -2,7 +2,7 @@
 //! layout bugs surface as errors instead of silently corrupt binaries.
 
 use crate::error::{Error, Result};
-use crate::ir::{dt, pf, pt, sht, ElfImage, Phdr};
+use crate::ir::{ElfImage, Phdr, dt, pf, pt, sht};
 
 fn fail(msg: impl Into<String>) -> Error {
     Error::Constraint(msg.into())
@@ -112,10 +112,10 @@ fn dynamic_consistency(image: &ElfImage<'_>) -> Result<()> {
     // PT_DYNAMIC and the SHT_DYNAMIC section must describe the same bytes.
     let dyn_seg = image.phdrs.iter().find(|p| p.p_type == pt::DYNAMIC);
     let dyn_sec = image.shdrs.iter().find(|s| s.sh_type == sht::DYNAMIC);
-    if let (Some(seg), Some(sec)) = (dyn_seg, dyn_sec) {
-        if seg.vaddr != sec.addr || seg.offset != sec.offset {
-            return Err(fail("PT_DYNAMIC and .dynamic disagree on location"));
-        }
+    if let (Some(seg), Some(sec)) = (dyn_seg, dyn_sec)
+        && (seg.vaddr != sec.addr || seg.offset != sec.offset)
+    {
+        return Err(fail("PT_DYNAMIC and .dynamic disagree on location"));
     }
 
     Ok(())

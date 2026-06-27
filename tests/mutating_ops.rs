@@ -80,9 +80,11 @@ fn replace_needed_changes_entry() {
         &["--replace-needed", first, "libreplacement-longer-name.so.3"],
     );
     let after = out(&reference, "--print-needed", &bin);
-    assert!(after
-        .lines()
-        .any(|l| l == "libreplacement-longer-name.so.3"));
+    assert!(
+        after
+            .lines()
+            .any(|l| l == "libreplacement-longer-name.so.3")
+    );
     assert!(!after.lines().any(|l| l == first));
 }
 
@@ -477,12 +479,14 @@ fn rename_dynamic_symbols_matches_reference() {
     let ours = copy("exe-dyn-le", "rename-ours");
     let theirs = copy("exe-dyn-le", "rename-ref");
     patch(&ours, &["--rename-dynamic-symbols", map.to_str().unwrap()]);
-    assert!(Command::new(&reference)
-        .args(["--rename-dynamic-symbols", map.to_str().unwrap()])
-        .arg(&theirs)
-        .status()
-        .unwrap()
-        .success());
+    assert!(
+        Command::new(&reference)
+            .args(["--rename-dynamic-symbols", map.to_str().unwrap()])
+            .arg(&theirs)
+            .status()
+            .unwrap()
+            .success()
+    );
 
     let a_buf = std::fs::read(&ours).unwrap();
     let a = formatelf::parser::parse(&a_buf).unwrap();
@@ -519,12 +523,14 @@ fn build_resolution_cache_matches_reference() {
     let ours = mk("ldcache-ours");
     let theirs = mk("ldcache-ref");
     patch(&ours, &["--build-resolution-cache"]);
-    assert!(Command::new(&reference)
-        .arg("--build-resolution-cache")
-        .arg(&theirs)
-        .status()
-        .unwrap()
-        .success());
+    assert!(
+        Command::new(&reference)
+            .arg("--build-resolution-cache")
+            .arg(&theirs)
+            .status()
+            .unwrap()
+            .success()
+    );
 
     let a_buf = std::fs::read(&ours).unwrap();
     let a = formatelf::parser::parse(&a_buf).unwrap();
@@ -538,10 +544,11 @@ fn build_resolution_cache_matches_reference() {
     );
 
     // The note must be covered by a PT_NOTE segment.
-    assert!(a
-        .phdrs
-        .iter()
-        .any(|p| p.p_type == formatelf::ir::pt::NOTE && p.vaddr == a.shdrs[ai].addr));
+    assert!(
+        a.phdrs
+            .iter()
+            .any(|p| p.p_type == formatelf::ir::pt::NOTE && p.vaddr == a.shdrs[ai].addr)
+    );
 }
 
 #[test]
@@ -632,12 +639,14 @@ fn build_resolution_cache_records_unresolvable_hint() {
     let ours = mk("ldcache-hint-ours");
     let theirs = mk("ldcache-hint-ref");
     patch(&ours, &["--build-resolution-cache"]);
-    assert!(Command::new(&reference)
-        .arg("--build-resolution-cache")
-        .arg(&theirs)
-        .status()
-        .unwrap()
-        .success());
+    assert!(
+        Command::new(&reference)
+            .arg("--build-resolution-cache")
+            .arg(&theirs)
+            .status()
+            .unwrap()
+            .success()
+    );
     assert_eq!(ldcache_note(&ours), ldcache_note(&theirs));
 }
 
@@ -664,12 +673,14 @@ fn build_resolution_cache_joins_multiple_dirs() {
     let ours = mk("ldcache-multi-ours");
     let theirs = mk("ldcache-multi-ref");
     patch(&ours, &["--build-resolution-cache"]);
-    assert!(Command::new(&reference)
-        .arg("--build-resolution-cache")
-        .arg(&theirs)
-        .status()
-        .unwrap()
-        .success());
+    assert!(
+        Command::new(&reference)
+            .arg("--build-resolution-cache")
+            .arg(&theirs)
+            .status()
+            .unwrap()
+            .success()
+    );
     assert_eq!(ldcache_note(&ours), ldcache_note(&theirs));
 }
 
@@ -711,7 +722,7 @@ fn build_resolution_cache_refreshes_in_place() {
 /// must satisfy `value == rld_map_addr - slot_offset - dynamic_addr` in the
 /// emitted binary regardless of how .dynamic was rewritten.
 fn assert_rld_map_rel_valid(bin: &Path) {
-    use formatelf::ir::{dt, sht, Class};
+    use formatelf::ir::{Class, dt, sht};
     let img_buf = std::fs::read(bin).unwrap();
     let img = formatelf::parser::parse(&img_buf).unwrap();
     let sec_addr = |i: usize| img.shdrs[i].addr;

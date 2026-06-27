@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::error::{Error, Result};
-use crate::ir::{self, dt, shf, sht, ElfImage};
+use crate::ir::{self, ElfImage, dt, shf, sht};
 use crate::ops::{needed, require_dynamic};
 
 pub fn build(image: &mut ElfImage<'_>) -> Result<()> {

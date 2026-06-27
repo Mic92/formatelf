@@ -11,7 +11,7 @@
 
 use crate::codec;
 use crate::error::{Error, Result};
-use crate::ir::{dt, et, pf, pt, shf, sht, Class, ElfImage, Phdr};
+use crate::ir::{Class, ElfImage, Phdr, dt, et, pf, pt, shf, sht};
 use crate::serialize;
 use crate::verify;
 

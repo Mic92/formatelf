@@ -4,8 +4,8 @@
 use std::path::Path;
 
 use crate::error::Result;
-use crate::ir::{self, dt, ElfImage};
-use crate::ops::{dynstr_section, dynstr_set, needed, require_dynamic, Modifiers};
+use crate::ir::{self, ElfImage, dt};
+use crate::ops::{Modifiers, dynstr_section, dynstr_set, needed, require_dynamic};
 
 /// DT_RUNPATH takes precedence over the obsolete DT_RPATH.
 pub fn read(image: &ElfImage<'_>) -> Result<String> {

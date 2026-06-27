@@ -9,14 +9,10 @@
 use std::collections::BTreeMap;
 
 use crate::error::{Error, Result};
-use crate::ir::{sht, Class, ElfImage, Endian};
+use crate::ir::{Class, ElfImage, Endian, sht};
 
 fn enc(big: bool) -> Endian {
-    if big {
-        Endian::Big
-    } else {
-        Endian::Little
-    }
+    if big { Endian::Big } else { Endian::Little }
 }
 
 fn rd_u32(big: bool, b: &[u8], o: usize) -> u32 {
@@ -102,10 +98,10 @@ pub fn rename_dynamic_symbols(
     let mut renames: Vec<(usize, String)> = Vec::new();
     for i in 0..nsyms {
         let name = sym_name(image, dynsym, dynstr, symsize, i);
-        if let Ok(s) = std::str::from_utf8(name) {
-            if let Some(new) = remap.get(s) {
-                renames.push((i, new.clone()));
-            }
+        if let Ok(s) = std::str::from_utf8(name)
+            && let Some(new) = remap.get(s)
+        {
+            renames.push((i, new.clone()));
         }
     }
     if renames.is_empty() {
@@ -163,7 +159,11 @@ fn rebuild_gnu_hash(
     gnu_hashes: &[u32],
     nsyms: usize,
 ) -> Result<Option<Reorder>> {
-    let symsize = if image.enc.class == Class::Elf64 { 24 } else { 16 };
+    let symsize = if image.enc.class == Class::Elf64 {
+        24
+    } else {
+        16
+    };
     let dynsym = image.find_section(".dynsym").unwrap();
     let Some(gh) = image.find_section(".gnu.hash") else {
         return Ok(None);
