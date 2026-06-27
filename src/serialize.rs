@@ -5,26 +5,28 @@
 //! of a relocated section) survive without being enumerated; the grown tail
 //! stays zero. Overlapping spans signal an inconsistent layout and are rejected.
 
+use std::borrow::Cow;
+
 use crate::codec;
 use crate::error::{Error, Result};
 use crate::ir::{sht, ElfImage};
 
 /// A changed region placed at `at` in the output.
-struct Span {
+struct Span<'a> {
     at: u64,
-    bytes: Vec<u8>,
+    bytes: Cow<'a, [u8]>,
 }
 
 /// Encode the headers and section data into placed spans. The layout engine
 /// must already have assigned every offset and synced section sizes. A region
 /// that already matches the input is dropped: the gap copy reproduces it, so
 /// the resulting spans are exactly the file's delta from the original.
-fn owned_spans(image: &ElfImage, original: &[u8]) -> Result<Vec<Span>> {
+fn owned_spans<'a>(image: &'a ElfImage, original: &[u8]) -> Result<Vec<Span<'a>>> {
     let enc = image.enc;
     let mut spans = Vec::new();
-    let mut push = |at: u64, bytes: Vec<u8>| {
+    let mut push = |at: u64, bytes: Cow<'a, [u8]>| {
         let a = at as usize;
-        if bytes.is_empty() || original.get(a..a + bytes.len()) == Some(bytes.as_slice()) {
+        if bytes.is_empty() || original.get(a..a + bytes.len()) == Some(bytes.as_ref()) {
             return;
         }
         spans.push(Span { at, bytes });
@@ -38,19 +40,19 @@ fn owned_spans(image: &ElfImage, original: &[u8]) -> Result<Vec<Span>> {
         image.shdrs.len(),
         &mut ehdr,
     )?;
-    push(0, ehdr);
+    push(0, Cow::Owned(ehdr));
 
     let mut pht = Vec::new();
     for p in &image.phdrs {
         codec::write_phdr(enc, p, &mut pht)?;
     }
-    push(image.ehdr.phoff, pht);
+    push(image.ehdr.phoff, Cow::Owned(pht));
 
     let mut sht = Vec::new();
     for s in &image.shdrs {
         codec::write_shdr(enc, s, &mut sht)?;
     }
-    push(image.ehdr.shoff, sht);
+    push(image.ehdr.shoff, Cow::Owned(sht));
 
     for (s, data) in image.shdrs.iter().zip(&image.section_data) {
         if s.sh_type == sht::NOBITS {
@@ -63,7 +65,7 @@ fn owned_spans(image: &ElfImage, original: &[u8]) -> Result<Vec<Span>> {
                 s.size
             )));
         }
-        push(s.offset, data.clone());
+        push(s.offset, Cow::Borrowed(data.as_slice()));
     }
     Ok(spans)
 }
