@@ -1,5 +1,7 @@
 # formatelf
 
+Status: early development, not tested on a larger set of executables beyond tests in this repo.
+
 A reimplementation of [patchelf](https://github.com/NixOS/patchelf) in Rust:
 modify the dynamic linker, RPATH, and other ELF metadata of executables and
 shared libraries.
