@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 
 use crate::error::{Error, Result};
-use crate::ir::{cstr, sht, Class, ElfImage, Endian};
+use crate::ir::{sht, Class, ElfImage, Endian};
 
 fn enc(big: bool) -> Endian {
     if big {
@@ -64,18 +64,21 @@ fn sysv_hash(name: &[u8]) -> u32 {
     h
 }
 
-/// Name of dynamic symbol `i`, read from the (possibly grown) `.dynstr`.
-fn sym_name(
-    image: &ElfImage<'_>,
+/// Name bytes of dynamic symbol `i`, borrowed from `.dynstr`. The hashes work
+/// on bytes, so no UTF-8 check or copy.
+fn sym_name<'a>(
+    image: &'a ElfImage<'_>,
     dynsym: usize,
     dynstr: usize,
     symsize: usize,
     i: usize,
-) -> Vec<u8> {
+) -> &'a [u8] {
     let big = image.enc.endian == Endian::Big;
-    let st_name = rd_u32(big, &image.section_data[dynsym], i * symsize);
+    let st_name = rd_u32(big, &image.section_data[dynsym], i * symsize) as usize;
     let tab = &image.section_data[dynstr];
-    cstr(tab, st_name).unwrap_or("").as_bytes().to_vec()
+    let rest = tab.get(st_name..).unwrap_or(&[]);
+    let end = rest.iter().position(|&b| b == 0).unwrap_or(rest.len());
+    &rest[..end]
 }
 
 pub fn rename_dynamic_symbols(
@@ -99,7 +102,7 @@ pub fn rename_dynamic_symbols(
     let mut renames: Vec<(usize, String)> = Vec::new();
     for i in 0..nsyms {
         let name = sym_name(image, dynsym, dynstr, symsize, i);
-        if let Ok(s) = std::str::from_utf8(&name) {
+        if let Ok(s) = std::str::from_utf8(name) {
             if let Some(new) = remap.get(s) {
                 renames.push((i, new.clone()));
             }
@@ -163,8 +166,7 @@ fn rebuild_gnu_hash(
     }
     let mut entries: Vec<Entry> = (0..count)
         .map(|old_pos| {
-            let name = sym_name(image, dynsym, dynstr, symsize, symndx + old_pos);
-            let hash = gnu_hash(&name);
+            let hash = gnu_hash(sym_name(image, dynsym, dynstr, symsize, symndx + old_pos));
             Entry {
                 hash,
                 bucket: hash as usize % num_buckets,
@@ -248,7 +250,7 @@ fn rebuild_sysv_hash(
     let first = nsyms - nchain;
 
     let names: Vec<u32> = (first..nsyms)
-        .map(|i| sysv_hash(&sym_name(image, dynsym, dynstr, symsize, i)) % num_buckets as u32)
+        .map(|i| sysv_hash(sym_name(image, dynsym, dynstr, symsize, i)) % num_buckets as u32)
         .collect();
     let data = image.section_data[hash].to_mut();
     for b in &mut data[buckets_off..buckets_off + (num_buckets + nchain) * 4] {
