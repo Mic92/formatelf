@@ -9,7 +9,7 @@ use formatelf::parser;
 
 fn check(path: &std::path::Path) {
     let data = std::fs::read(path).unwrap();
-    let img = parser::parse(&data).unwrap_or_else(|e| panic!("parse {path:?}: {e}"));
+    let img = parser::parse(&data).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
 
     // Ehdr: re-encode with the original table counts and compare.
     let mut buf = Vec::new();
@@ -21,7 +21,12 @@ fn check(path: &std::path::Path) {
         &mut buf,
     )
     .unwrap();
-    assert_eq!(buf, &data[..buf.len()], "ehdr mismatch for {path:?}");
+    assert_eq!(
+        buf,
+        &data[..buf.len()],
+        "ehdr mismatch for {}",
+        path.display()
+    );
 
     let phsize = codec::phdr_size(img.enc.class);
     for (i, p) in img.phdrs.iter().enumerate() {
@@ -31,7 +36,8 @@ fn check(path: &std::path::Path) {
         assert_eq!(
             buf,
             &data[off..off + phsize],
-            "phdr {i} mismatch for {path:?}"
+            "phdr {i} mismatch for {}",
+            path.display()
         );
     }
 
@@ -43,7 +49,8 @@ fn check(path: &std::path::Path) {
         assert_eq!(
             buf,
             &data[off..off + shsize],
-            "shdr {i} mismatch for {path:?}"
+            "shdr {i} mismatch for {}",
+            path.display()
         );
     }
 
@@ -62,7 +69,8 @@ fn check(path: &std::path::Path) {
         assert_eq!(
             buf,
             &data[off..off + buf.len()],
-            "dynamic mismatch for {path:?}"
+            "dynamic mismatch for {}",
+            path.display()
         );
     }
 }

@@ -18,7 +18,7 @@ fn slice<'a>(data: &'a [u8], off: u64, len: u64, what: &str) -> Result<&'a [u8]>
 /// Validate that a `count`-entry table of `size`-byte records fits at `off`,
 /// returning its bytes. Bounding the span before allocating caps `count` to
 /// the file size, so an attacker's huge header count cannot drive a giant
-/// Vec::with_capacity.
+/// `Vec::with_capacity`.
 fn table<'a>(data: &'a [u8], off: u64, count: u64, size: u64, what: &str) -> Result<&'a [u8]> {
     let len = count
         .checked_mul(size)
@@ -72,7 +72,7 @@ pub fn parse(data: &[u8]) -> Result<ElfImage<'_>> {
 }
 
 /// Decode a dynamic array of `filesz` bytes starting at `off`, stopping at the
-/// terminating DT_NULL.
+/// terminating `DT_NULL`.
 fn read_dyn_array(data: &[u8], enc: Encoding, off: u64, filesz: u64) -> Result<Vec<DynEntry>> {
     let dsize = codec::dyn_size(enc.class) as u64;
     let bytes = slice(data, off, filesz - filesz % dsize, "dynamic")?;
@@ -90,7 +90,7 @@ fn read_dyn_array(data: &[u8], enc: Encoding, off: u64, filesz: u64) -> Result<V
 
 /// When there is no `.dynstr` section (stripped section headers) but the
 /// dynamic array is present, recover the string-table bytes by mapping
-/// DT_STRTAB's virtual address through the PT_LOAD segments.
+/// `DT_STRTAB`'s virtual address through the `PT_LOAD` segments.
 fn recover_dynstr(
     data: &[u8],
     phdrs: &[Phdr],
@@ -107,7 +107,7 @@ fn recover_dynstr(
     slice(data, off, strsz, "dynstr").ok().map(<[u8]>::to_vec)
 }
 
-/// Recover the interpreter path from PT_INTERP. interpreter() prefers the
+/// Recover the interpreter path from `PT_INTERP`. `interpreter()` prefers the
 /// `.interp` section when present and falls back to this for stripped binaries.
 fn recover_interp(data: &[u8], phdrs: &[Phdr]) -> Option<Vec<u8>> {
     let p = phdrs.iter().find(|p| p.p_type == pt::INTERP)?;
@@ -124,9 +124,9 @@ fn vaddr_to_off(phdrs: &[Phdr], vaddr: u64) -> Option<u64> {
         .map(|p| p.offset.saturating_add(vaddr - p.vaddr))
 }
 
-/// Resolve the PN_XNUM / SHN_XINDEX escapes. When the 16-bit header fields
-/// can't hold the real counts, section 0's header carries them: sh_info for
-/// program headers, sh_size for sections, sh_link for the name string table.
+/// Resolve the `PN_XNUM` / `SHN_XINDEX` escapes. When the 16-bit header fields
+/// can't hold the real counts, section 0's header carries them: `sh_info` for
+/// program headers, `sh_size` for sections, `sh_link` for the name string table.
 fn resolve_counts(
     data: &[u8],
     enc: Encoding,
@@ -134,8 +134,9 @@ fn resolve_counts(
     raw_phnum: u16,
     raw_shnum: u16,
 ) -> Result<(u64, u64)> {
-    let needs_escape =
-        raw_phnum == codec::PN_XNUM || raw_shnum == 0 || ehdr.shstrndx == codec::SHN_XINDEX as u32;
+    let needs_escape = raw_phnum == codec::PN_XNUM
+        || raw_shnum == 0
+        || ehdr.shstrndx == u32::from(codec::SHN_XINDEX);
     let sec0 = if ehdr.shoff != 0 && needs_escape {
         let shsize = codec::shdr_size(enc.class) as u64;
         Some(codec::read_shdr(
@@ -147,16 +148,17 @@ fn resolve_counts(
     };
 
     let phnum = if raw_phnum == codec::PN_XNUM {
-        sec0.as_ref().map_or(raw_phnum as u64, |s| s.info as u64)
+        sec0.as_ref()
+            .map_or(u64::from(raw_phnum), |s| u64::from(s.info))
     } else {
-        raw_phnum as u64
+        u64::from(raw_phnum)
     };
     // e_shnum == 0 with a section table present means the count is in sh_size.
     let shnum = match (raw_shnum, &sec0) {
         (0, Some(s)) => s.size,
-        _ => raw_shnum as u64,
+        _ => u64::from(raw_shnum),
     };
-    if ehdr.shstrndx == codec::SHN_XINDEX as u32
+    if ehdr.shstrndx == u32::from(codec::SHN_XINDEX)
         && let Some(s) = &sec0
     {
         ehdr.shstrndx = s.link;
@@ -188,7 +190,7 @@ fn read_dynamic(
 mod tests {
     use super::*;
 
-    /// Regression: a PT_LOAD with vaddr near u64::MAX overflowed the
+    /// Regression: a `PT_LOAD` with vaddr near `u64::MAX` overflowed the
     /// `vaddr + filesz` range check while recovering .dynstr from segments.
     #[test]
     fn vaddr_to_off_handles_address_overflow() {

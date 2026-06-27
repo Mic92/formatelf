@@ -1,5 +1,5 @@
 //! Rename dynamic symbols, rebuilding the structures that index them by name
-//! or position: the GNU and SysV hash tables, the `.gnu.version` array and the
+//! or position: the GNU and `SysV` hash tables, the `.gnu.version` array and the
 //! symbol indices held in relocation entries. Mirrors patchelf's
 //! `renameDynamicSymbols`/`rebuildGnuHashTable`/`rebuildHashTable`.
 //!
@@ -27,7 +27,7 @@ fn rd_uptr(big: bool, elf64: bool, b: &[u8], o: usize) -> u64 {
     if elf64 {
         enc(big).read_u64(b, o)
     } else {
-        enc(big).read_u32(b, o) as u64
+        u64::from(enc(big).read_u32(b, o))
     }
 }
 
@@ -42,7 +42,7 @@ fn wr_uptr(big: bool, elf64: bool, b: &mut [u8], o: usize, v: u64) {
 fn gnu_hash(name: &[u8]) -> u32 {
     let mut h = 5381u32;
     for &c in name {
-        h = h.wrapping_mul(33).wrapping_add(c as u32);
+        h = h.wrapping_mul(33).wrapping_add(u32::from(c));
     }
     h
 }
@@ -50,7 +50,7 @@ fn gnu_hash(name: &[u8]) -> u32 {
 fn sysv_hash(name: &[u8]) -> u32 {
     let mut h = 0u32;
     for &c in name {
-        h = (h << 4).wrapping_add(c as u32);
+        h = (h << 4).wrapping_add(u32::from(c));
         let g = h & 0xf000_0000;
         if g != 0 {
             h ^= g >> 24;
@@ -124,7 +124,7 @@ pub fn rename_dynamic_symbols(
     Ok(())
 }
 
-/// GNU and SysV hashes of every dynamic symbol, indexed by symbol position, in
+/// GNU and `SysV` hashes of every dynamic symbol, indexed by symbol position, in
 /// the pre-reorder order. Computed in a single pass over `.dynstr`.
 fn symbol_hashes(
     image: &ElfImage<'_>,
@@ -143,12 +143,19 @@ fn symbol_hashes(
     (gnu, sysv)
 }
 
-/// How rebuild_gnu_hash permuted the hashed symbols, so the SysV table can find
+/// How `rebuild_gnu_hash` permuted the hashed symbols, so the `SysV` table can find
 /// each symbol's pre-reorder hash without re-reading names: `new2old[k]` is the
 /// old position (relative to `symndx`) of the symbol now at new position `k`.
 struct Reorder {
     symndx: usize,
     new2old: Vec<usize>,
+}
+
+/// A hashed symbol's GNU hash, target bucket, and pre-sort position.
+struct Entry {
+    hash: u32,
+    bucket: usize,
+    old_pos: usize,
 }
 
 /// Reorder the hashed symbols by bucket (a GNU hash invariant), remap every
@@ -189,11 +196,6 @@ fn rebuild_gnu_hash(
     }
     let count = nsyms - symndx;
 
-    struct Entry {
-        hash: u32,
-        bucket: usize,
-        old_pos: usize,
-    }
     let mut entries: Vec<Entry> = (0..count)
         .map(|old_pos| {
             let hash = gnu_hashes[symndx + old_pos];

@@ -16,6 +16,7 @@ pub enum Endian {
 /// Fixed-width integer access into a byte buffer in this byte order. Panics on
 /// out-of-bounds, matching slice indexing; callers stay within sized records.
 impl Endian {
+    #[must_use]
     pub fn read_u16(self, b: &[u8], o: usize) -> u16 {
         let a = [b[o], b[o + 1]];
         match self {
@@ -24,6 +25,7 @@ impl Endian {
         }
     }
 
+    #[must_use]
     pub fn read_u32(self, b: &[u8], o: usize) -> u32 {
         let a = b[o..o + 4].try_into().unwrap();
         match self {
@@ -32,6 +34,7 @@ impl Endian {
         }
     }
 
+    #[must_use]
     pub fn read_u64(self, b: &[u8], o: usize) -> u64 {
         let a = b[o..o + 8].try_into().unwrap();
         match self {
@@ -84,7 +87,7 @@ pub struct Ehdr {
     pub phentsize: u16,
     pub shentsize: u16,
     /// Resolved section-name string-table index; widened to hold an
-    /// SHN_XINDEX value taken from section 0's sh_link.
+    /// `SHN_XINDEX` value taken from section 0's `sh_link`.
     pub shstrndx: u32,
     pub os_abi: u8,
     pub abi_version: u8,
@@ -208,16 +211,17 @@ pub struct ElfImage<'a> {
     /// Parallel to `shdrs`. Borrows the parsed input; ops clone on write.
     pub section_data: Vec<std::borrow::Cow<'a, [u8]>>,
     pub dynamic: Vec<DynEntry>,
-    /// Dyn-string-table bytes recovered from PT_DYNAMIC/PT_LOAD when there is no
+    /// Dyn-string-table bytes recovered from `PT_DYNAMIC/PT_LOAD` when there is no
     /// `.dynstr` section (stripped section headers). Read-only fallback; the
     /// mutating ops still require real sections, as patchelf does.
     pub dynstr_fallback: Option<Vec<u8>>,
-    /// Interpreter path recovered from PT_INTERP when there is no `.interp`
+    /// Interpreter path recovered from `PT_INTERP` when there is no `.interp`
     /// section. Read-only fallback for stripped binaries.
     pub interp_fallback: Option<Vec<u8>>,
 }
 
 /// Read a NUL-terminated string starting at `off` in a string table.
+#[must_use]
 pub fn cstr(tab: &[u8], off: u32) -> Option<&str> {
     let tab = tab.get(off as usize..)?;
     let end = tab.iter().position(|&b| b == 0).unwrap_or(tab.len());
@@ -225,23 +229,27 @@ pub fn cstr(tab: &[u8], off: u32) -> Option<&str> {
 }
 
 impl ElfImage<'_> {
+    #[must_use]
     pub fn section_name(&self, idx: usize) -> Option<&str> {
         let strtab = self.section_data.get(self.ehdr.shstrndx as usize)?;
         cstr(strtab, self.shdrs.get(idx)?.name)
     }
 
+    #[must_use]
     pub fn find_section(&self, name: &str) -> Option<usize> {
         (0..self.shdrs.len()).find(|&i| self.section_name(i) == Some(name))
     }
 
     /// Dynamic info is keyed off the parsed array (segment-derived), not the
     /// presence of a section header, so stripped binaries still count.
+    #[must_use]
     pub fn has_dynamic(&self) -> bool {
         !self.dynamic.is_empty()
     }
 
     /// Bytes of the dynamic string table: from the `.dynamic`-linked section
     /// when section headers exist, otherwise the segment-recovered fallback.
+    #[must_use]
     pub fn dynstr(&self) -> Option<&[u8]> {
         if let Some(dyn_idx) = self.shdrs.iter().position(|s| s.sh_type == sht::DYNAMIC) {
             let link = self.shdrs[dyn_idx].link as usize;
@@ -250,7 +258,7 @@ impl ElfImage<'_> {
                 .get(link)
                 .is_some_and(|s| s.sh_type == sht::STRTAB)
             {
-                return self.section_data.get(link).map(|c| c.as_ref());
+                return self.section_data.get(link).map(std::convert::AsRef::as_ref);
             }
         }
         self.dynstr_fallback.as_deref()

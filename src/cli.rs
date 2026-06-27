@@ -96,8 +96,8 @@ where
         .map_err(|e| Error::Cli(format!("bad arguments: {e}")))?
     {
         match arg {
-            Long("set-interpreter") | Long("interpreter") => {
-                args.ops.push(Operation::SetInterpreter(val(&mut p)?))
+            Long("set-interpreter" | "interpreter") => {
+                args.ops.push(Operation::SetInterpreter(val(&mut p)?));
             }
             Long("page-size") => {
                 let s = val(&mut p)?;
@@ -117,7 +117,7 @@ where
             Long("remove-rpath") => args.ops.push(Operation::RemoveRpath),
             Long("shrink-rpath") => args.ops.push(Operation::ShrinkRpath),
             Long("allowed-rpath-prefixes") => {
-                args.ops.push(Operation::AllowedRpathPrefixes(val(&mut p)?))
+                args.ops.push(Operation::AllowedRpathPrefixes(val(&mut p)?));
             }
             Long("set-rpath") => args.ops.push(Operation::SetRpath(val(&mut p)?)),
             Long("add-rpath") => args.ops.push(Operation::AddRpath(val(&mut p)?)),
@@ -133,7 +133,7 @@ where
             Long("print-needed") => args.ops.push(Operation::PrintNeeded),
             Long("no-default-lib") => args.ops.push(Operation::NoDefaultLib),
             Long("clear-symbol-version") => {
-                args.ops.push(Operation::ClearSymbolVersion(val(&mut p)?))
+                args.ops.push(Operation::ClearSymbolVersion(val(&mut p)?));
             }
             Long("add-debug-tag") => args.ops.push(Operation::AddDebugTag),
             Long("build-resolution-cache") => args.ops.push(Operation::BuildResolutionCache),

@@ -66,21 +66,21 @@ pub fn apply(
         Operation::SetOsAbi(name) => set_os_abi(image, name)?,
         Operation::NoDefaultLib => no_default_lib(image)?,
         Operation::AddDebugTag => add_debug_tag(image)?,
-        Operation::ClearExecstack => modify_execstack(image, false)?,
-        Operation::SetExecstack => modify_execstack(image, true)?,
+        Operation::ClearExecstack => modify_execstack(image, false),
+        Operation::SetExecstack => modify_execstack(image, true),
         Operation::ClearSymbolVersion(sym) => clear_symbol_version(image, sym)?,
         Operation::RenameDynamicSymbols(path) => {
-            crate::symbols::rename_dynamic_symbols(image, &parse_symbol_map(path)?)?
+            crate::symbols::rename_dynamic_symbols(image, &parse_symbol_map(path)?)?;
         }
         Operation::BuildResolutionCache => crate::ldcache::build(image)?,
     }
     Ok(())
 }
 
-/// Drop DT_RPATH/DT_RUNPATH. The trailing DT_NULL is retained, so the encoded
+/// Drop `DT_RPATH/DT_RUNPATH`. The trailing `DT_NULL` is retained, so the encoded
 /// array only shrinks and the edit stays in place.
 /// Parse a symbol rename map: whitespace-separated `old new` pairs, one per
-/// line, blank lines ignored (the patchelf NAME_MAP_FILE format).
+/// line, blank lines ignored (the patchelf `NAME_MAP_FILE` format).
 fn parse_symbol_map(path: &Path) -> Result<BTreeMap<String, String>> {
     let text = std::fs::read_to_string(path).map_err(|source| Error::Io {
         path: path.to_path_buf(),
@@ -114,7 +114,7 @@ pub(crate) fn dynstr_append(buf: &mut Vec<u8>, s: &str) -> u64 {
 /// the slot keeps re-setting the same value free of growth (and idempotent).
 pub(crate) fn dynstr_set(buf: &mut Vec<u8>, reuse: Option<usize>, s: &str) -> u64 {
     if let Some(off) = reuse {
-        let old_len = ir::cstr(buf, off as u32).map(str::len).unwrap_or(0);
+        let old_len = ir::cstr(buf, off as u32).map_or(0, str::len);
         if s.len() <= old_len {
             buf[off..off + s.len()].copy_from_slice(s.as_bytes());
             buf[off + s.len()] = 0;
@@ -214,9 +214,10 @@ fn replace_needed(image: &mut ElfImage<'_>, old: &str, new: &str) -> Result<()> 
     Ok(())
 }
 
-/// Set the `.gnu.version` entry to 1 (VER_NDX_GLOBAL) for every dynamic symbol
+/// Set the `.gnu.version` entry to 1 (`VER_NDX_GLOBAL`) for every dynamic symbol
 /// named `sym`. In-place: the versym array keeps its size.
 fn clear_symbol_version(image: &mut ElfImage<'_>, sym: &str) -> Result<()> {
+    const VER_NDX_GLOBAL: u16 = 1;
     let dynsym = image
         .find_section(".dynsym")
         .ok_or_else(|| Error::Missing("cannot find section .dynsym".into()))?;
@@ -236,9 +237,8 @@ fn clear_symbol_version(image: &mut ElfImage<'_>, sym: &str) -> Result<()> {
         return Err(Error::Parse("versym smaller than dynsym".into()));
     }
 
-    // st_name (u32) is the first field of both Elf32_Sym and Elf64_Sym.
-    const VER_NDX_GLOBAL: u16 = 1;
     for i in 0..count {
+        // st_name (u32) is the first field of both Elf32_Sym and Elf64_Sym.
         let st_name = e.read_u32(&image.section_data[dynsym], i * sym_size);
         if ir::cstr(&image.section_data[dynstr], st_name) == Some(sym) {
             e.write_u16(image.section_data[versym].to_mut(), i * 2, VER_NDX_GLOBAL);
@@ -275,7 +275,7 @@ fn set_os_abi(image: &mut ElfImage<'_>, name: &str) -> Result<()> {
     Ok(())
 }
 
-/// EI_OSABI code for a human name, or None if unrecognized.
+/// `EI_OSABI` code for a human name, or None if unrecognized.
 fn abi_code(name: &str) -> Option<u8> {
     Some(match name.trim().to_ascii_lowercase().as_str() {
         "system v" | "system-v" | "sysv" => 0,
@@ -294,18 +294,18 @@ fn abi_code(name: &str) -> Option<u8> {
     })
 }
 
-/// Toggle PF_X on PT_GNU_STACK. When the segment is absent, reuse a spare
-/// PT_NULL slot if there is one, else append a new entry (the layout engine
-/// relocates the program header table to make room). PT_GNU_STACK carries no
+/// Toggle `PF_X` on `PT_GNU_STACK`. When the segment is absent, reuse a spare
+/// `PT_NULL` slot if there is one, else append a new entry (the layout engine
+/// relocates the program header table to make room). `PT_GNU_STACK` carries no
 /// file content, so a fresh entry needs no offset/address assignment.
-fn modify_execstack(image: &mut ElfImage<'_>, set: bool) -> Result<()> {
+fn modify_execstack(image: &mut ElfImage<'_>, set: bool) {
     if let Some(p) = image
         .phdrs
         .iter_mut()
         .find(|p| p.p_type == ir::pt::GNU_STACK)
     {
         p.flags = with_execstack(p.flags, set);
-        return Ok(());
+        return;
     }
     let new = ir::Phdr {
         p_type: ir::pt::GNU_STACK,
@@ -321,7 +321,6 @@ fn modify_execstack(image: &mut ElfImage<'_>, set: bool) -> Result<()> {
         Some(p) => *p = new,
         None => image.phdrs.push(new),
     }
-    Ok(())
 }
 
 pub(crate) fn require_dynamic(image: &ElfImage<'_>) -> Result<()> {
@@ -372,7 +371,7 @@ pub(crate) fn needed(image: &ElfImage<'_>) -> Result<Vec<String>> {
         .collect())
 }
 
-/// Set or clear PF_X, leaving the other flag bits untouched.
+/// Set or clear `PF_X`, leaving the other flag bits untouched.
 fn with_execstack(flags: u32, set: bool) -> u32 {
     if set {
         flags | ir::pf::X

@@ -1,5 +1,5 @@
 //! The NixOS ld-cache note (`--build-resolution-cache`): bake the resolved
-//! location of each searched DT_NEEDED entry into a note so the loader can skip
+//! location of each searched `DT_NEEDED` entry into a note so the loader can skip
 //! the run-path search. Mirrors patchelf's buildResolutionCache.
 
 use std::collections::BTreeMap;
@@ -69,8 +69,8 @@ pub fn build(image: &mut ElfImage<'_>) -> Result<()> {
     add_note_section(image, &desc)
 }
 
-/// Append a NixOS ld-cache SHT_NOTE section plus a PT_NOTE that points at it;
-/// the layout engine assigns its address and the covering PT_LOAD.
+/// Append a NixOS ld-cache `SHT_NOTE` section plus a `PT_NOTE` that points at it;
+/// the layout engine assigns its address and the covering `PT_LOAD`.
 fn add_note_section(image: &mut ElfImage<'_>, desc: &[u8]) -> Result<()> {
     const NT_NIXOS_LD_CACHE: u32 = 0x63a8_6cb6;
     let big = image.enc.endian == ir::Endian::Big;

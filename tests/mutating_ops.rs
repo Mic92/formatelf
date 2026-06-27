@@ -385,15 +385,15 @@ fn print_interpreter_works_without_section_headers() {
     );
 }
 
-/// Shared objects are often linked without a PT_PHDR segment. The loader then
-/// finds the program header table via e_phoff, so a relayout must still work:
-/// it just has no PT_PHDR entry to re-point.
+/// Shared objects are often linked without a `PT_PHDR` segment. The loader then
+/// finds the program header table via `e_phoff`, so a relayout must still work:
+/// it just has no `PT_PHDR` entry to re-point.
 #[test]
 fn relayout_without_pt_phdr() {
+    use formatelf::ir::pt;
     if !fixtures::zig_available() {
         return;
     }
-    use formatelf::ir::pt;
     let data = std::fs::read(sample("exe-dyn-le")).unwrap();
     let mut img = formatelf::parser::parse(&data).unwrap();
     img.phdrs.retain(|p| p.p_type != pt::PHDR);
@@ -687,11 +687,11 @@ fn build_resolution_cache_joins_multiple_dirs() {
 #[test]
 fn build_resolution_cache_refreshes_in_place() {
     use formatelf::ir::pt;
-    let Some(_reference) = guard() else { return };
+    let Some(reference) = guard() else { return };
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("ldcache-refresh-dir");
     std::fs::create_dir_all(&dir).unwrap();
     let src = sample("exe-dyn-le");
-    for lib in out(&_reference, "--print-needed", &src).lines() {
+    for lib in out(&reference, "--print-needed", &src).lines() {
         std::fs::copy(&src, dir.join(lib)).unwrap();
     }
 
@@ -718,7 +718,7 @@ fn build_resolution_cache_refreshes_in_place() {
     );
 }
 
-/// DT_MIPS_RLD_MAP_REL stores the offset from its own slot to .rld_map, so it
+/// `DT_MIPS_RLD_MAP_REL` stores the offset from its own slot to .`rld_map`, so it
 /// must satisfy `value == rld_map_addr - slot_offset - dynamic_addr` in the
 /// emitted binary regardless of how .dynamic was rewritten.
 fn assert_rld_map_rel_valid(bin: &Path) {
@@ -747,8 +747,8 @@ fn assert_rld_map_rel_valid(bin: &Path) {
     assert_eq!(e.val, expect, "DT_MIPS_RLD_MAP_REL offset is stale");
 }
 
-/// A relayout that moves .dynamic must recompute DT_MIPS_RLD_MAP_REL and keep
-/// PT_MIPS_ABIFLAGS anchored to .MIPS.abiflags.
+/// A relayout that moves .dynamic must recompute `DT_MIPS_RLD_MAP_REL` and keep
+/// `PT_MIPS_ABIFLAGS` anchored to .MIPS.abiflags.
 #[test]
 fn mips_relayout_fixes_arch_specific_fields() {
     use formatelf::ir::pt;
@@ -777,7 +777,7 @@ fn mips_relayout_fixes_arch_specific_fields() {
     assert_eq!(seg.filesz, img.shdrs[af].size);
 }
 
-/// Removing a dynamic entry ahead of DT_MIPS_RLD_MAP_REL shifts its slot up,
+/// Removing a dynamic entry ahead of `DT_MIPS_RLD_MAP_REL` shifts its slot up,
 /// changing the slot-relative offset even though nothing is relocated.
 #[test]
 fn mips_remove_needed_fixes_rld_map_rel() {

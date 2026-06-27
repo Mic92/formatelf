@@ -1,4 +1,4 @@
-//! set-rpath benchmark: parse, rewrite DT_RPATH, serialize. Needs `zig` on
+//! set-rpath benchmark: parse, rewrite `DT_RPATH`, serialize. Needs `zig` on
 //! PATH (the dev shell provides it) to build the fixture.
 
 use std::hint::black_box;
@@ -40,7 +40,7 @@ fn add_needed(bencher: divan::Bencher) {
         run(
             &data,
             &formatelf::cli::Operation::AddNeeded("libextra.so".into()),
-        )
+        );
     });
 }
 
@@ -51,7 +51,7 @@ fn set_soname(bencher: divan::Bencher) {
         run(
             &data,
             &formatelf::cli::Operation::SetSoname("libfoo.so.1".into()),
-        )
+        );
     });
 }
 
@@ -62,7 +62,7 @@ fn set_interpreter(bencher: divan::Bencher) {
         run(
             &data,
             &formatelf::cli::Operation::SetInterpreter("/lib/ld.so".into()),
-        )
+        );
     });
 }
 

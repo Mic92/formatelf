@@ -8,7 +8,7 @@ use object::{Endianness, U16, U32, U64};
 use crate::error::{Error, Result};
 use crate::ir::{Class, DynEntry, Ehdr, Encoding, Endian, Phdr, Shdr};
 
-/// Placeholder e_ident; the real 16 bytes are copied over verbatim afterwards.
+/// Placeholder `e_ident`; the real 16 bytes are copied over verbatim afterwards.
 fn zero_ident() -> elf::Ident {
     elf::Ident {
         magic: [0; 4],
@@ -21,6 +21,7 @@ fn zero_ident() -> elf::Ident {
     }
 }
 
+#[must_use]
 pub fn endianness(e: Endian) -> Endianness {
     match e {
         Endian::Little => Endianness::Little,
@@ -31,7 +32,7 @@ pub fn endianness(e: Endian) -> Endianness {
 fn pod<T: object::Pod>(data: &[u8]) -> Result<&T> {
     object::from_bytes(data)
         .map(|(v, _)| v)
-        .map_err(|_| Error::Parse("truncated struct".into()))
+        .map_err(|()| Error::Parse("truncated struct".into()))
 }
 
 /// Narrow a widened IR value to a 32-bit on-disk field, refusing to silently
@@ -76,7 +77,7 @@ pub fn read_ehdr(data: &[u8]) -> Result<(Ehdr, Encoding, u16, u16)> {
                 ehsize: h.e_ehsize.get(e),
                 phentsize: h.e_phentsize.get(e),
                 shentsize: h.e_shentsize.get(e),
-                shstrndx: h.e_shstrndx.get(e) as u32,
+                shstrndx: u32::from(h.e_shstrndx.get(e)),
                 os_abi: data[7],
                 abi_version: data[8],
                 ident,
@@ -89,14 +90,14 @@ pub fn read_ehdr(data: &[u8]) -> Result<(Ehdr, Encoding, u16, u16)> {
                 e_type: h.e_type.get(e),
                 machine: h.e_machine.get(e),
                 version: h.e_version.get(e),
-                entry: h.e_entry.get(e) as u64,
-                phoff: h.e_phoff.get(e) as u64,
-                shoff: h.e_shoff.get(e) as u64,
+                entry: u64::from(h.e_entry.get(e)),
+                phoff: u64::from(h.e_phoff.get(e)),
+                shoff: u64::from(h.e_shoff.get(e)),
                 flags: h.e_flags.get(e),
                 ehsize: h.e_ehsize.get(e),
                 phentsize: h.e_phentsize.get(e),
                 shentsize: h.e_shentsize.get(e),
-                shstrndx: h.e_shstrndx.get(e) as u32,
+                shstrndx: u32::from(h.e_shstrndx.get(e)),
                 os_abi: data[7],
                 abi_version: data[8],
                 ident,
@@ -108,11 +109,11 @@ pub fn read_ehdr(data: &[u8]) -> Result<(Ehdr, Encoding, u16, u16)> {
     Ok((ehdr, Encoding { class, endian }, phnum, shnum))
 }
 
-/// e_phnum == PN_XNUM signals the real count lives in section 0's sh_info.
+/// `e_phnum` == `PN_XNUM` signals the real count lives in section 0's `sh_info`.
 pub const PN_XNUM: u16 = 0xffff;
 /// First reserved section index; counts at/above it use the section-0 escape.
 pub const SHN_LORESERVE: u32 = 0xff00;
-/// e_shstrndx == SHN_XINDEX signals the real index lives in section 0's sh_link.
+/// `e_shstrndx` == `SHN_XINDEX` signals the real index lives in section 0's `sh_link`.
 pub const SHN_XINDEX: u16 = 0xffff;
 
 /// Compute the on-disk header count fields, substituting the section-0 escapes
@@ -214,12 +215,12 @@ pub fn read_phdr(enc: Encoding, data: &[u8]) -> Result<Phdr> {
             Ok(Phdr {
                 p_type: p.p_type.get(e),
                 flags: p.p_flags.get(e),
-                offset: p.p_offset.get(e) as u64,
-                vaddr: p.p_vaddr.get(e) as u64,
-                paddr: p.p_paddr.get(e) as u64,
-                filesz: p.p_filesz.get(e) as u64,
-                memsz: p.p_memsz.get(e) as u64,
-                align: p.p_align.get(e) as u64,
+                offset: u64::from(p.p_offset.get(e)),
+                vaddr: u64::from(p.p_vaddr.get(e)),
+                paddr: u64::from(p.p_paddr.get(e)),
+                filesz: u64::from(p.p_filesz.get(e)),
+                memsz: u64::from(p.p_memsz.get(e)),
+                align: u64::from(p.p_align.get(e)),
             })
         }
     }
@@ -281,14 +282,14 @@ pub fn read_shdr(enc: Encoding, data: &[u8]) -> Result<Shdr> {
             Ok(Shdr {
                 name: s.sh_name.get(e),
                 sh_type: s.sh_type.get(e),
-                flags: s.sh_flags.get(e) as u64,
-                addr: s.sh_addr.get(e) as u64,
-                offset: s.sh_offset.get(e) as u64,
-                size: s.sh_size.get(e) as u64,
+                flags: u64::from(s.sh_flags.get(e)),
+                addr: u64::from(s.sh_addr.get(e)),
+                offset: u64::from(s.sh_offset.get(e)),
+                size: u64::from(s.sh_size.get(e)),
                 link: s.sh_link.get(e),
                 info: s.sh_info.get(e),
-                addralign: s.sh_addralign.get(e) as u64,
-                entsize: s.sh_entsize.get(e) as u64,
+                addralign: u64::from(s.sh_addralign.get(e)),
+                entsize: u64::from(s.sh_entsize.get(e)),
             })
         }
     }
@@ -344,8 +345,8 @@ pub fn read_dyn(enc: Encoding, data: &[u8]) -> Result<DynEntry> {
         Class::Elf32 => {
             let d: &elf::Dyn32<Endianness> = pod(data)?;
             Ok(DynEntry {
-                tag: d.d_tag.get(e) as i32 as i64,
-                val: d.d_val.get(e) as u64,
+                tag: i64::from(d.d_tag.get(e) as i32),
+                val: u64::from(d.d_val.get(e)),
             })
         }
     }
@@ -374,6 +375,7 @@ pub fn write_dyn(enc: Encoding, d: &DynEntry, out: &mut Vec<u8>) -> Result<()> {
     Ok(())
 }
 
+#[must_use]
 pub fn phdr_size(class: Class) -> usize {
     match class {
         Class::Elf64 => core::mem::size_of::<elf::ProgramHeader64<Endianness>>(),
@@ -381,6 +383,7 @@ pub fn phdr_size(class: Class) -> usize {
     }
 }
 
+#[must_use]
 pub fn shdr_size(class: Class) -> usize {
     match class {
         Class::Elf64 => core::mem::size_of::<elf::SectionHeader64<Endianness>>(),
@@ -388,6 +391,7 @@ pub fn shdr_size(class: Class) -> usize {
     }
 }
 
+#[must_use]
 pub fn dyn_size(class: Class) -> usize {
     match class {
         Class::Elf64 => core::mem::size_of::<elf::Dyn64<Endianness>>(),
@@ -432,7 +436,7 @@ mod tests {
         let (got, _, phnum, shnum) = read_ehdr(&out).unwrap();
         assert_eq!(phnum, PN_XNUM);
         assert_eq!(shnum, 0);
-        assert_eq!(got.shstrndx, SHN_XINDEX as u32);
+        assert_eq!(got.shstrndx, u32::from(SHN_XINDEX));
     }
 
     #[test]

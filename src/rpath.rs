@@ -1,5 +1,5 @@
-//! The rpath/runpath operations: read, set, add, remove and shrink. DT_RUNPATH
-//! is preferred over the obsolete DT_RPATH unless --force-rpath is given.
+//! The rpath/runpath operations: read, set, add, remove and shrink. `DT_RUNPATH`
+//! is preferred over the obsolete `DT_RPATH` unless --force-rpath is given.
 
 use std::path::Path;
 
@@ -7,7 +7,7 @@ use crate::error::Result;
 use crate::ir::{self, ElfImage, dt};
 use crate::ops::{Modifiers, dynstr_section, dynstr_set, needed, require_dynamic};
 
-/// DT_RUNPATH takes precedence over the obsolete DT_RPATH.
+/// `DT_RUNPATH` takes precedence over the obsolete `DT_RPATH`.
 pub fn read(image: &ElfImage<'_>) -> Result<String> {
     require_dynamic(image)?;
     let Some(strtab) = image.dynstr() else {
@@ -85,7 +85,7 @@ fn filter_dirs(cur: &str, allowed: &[String], mut keep: impl FnMut(&str) -> bool
     out.join(":")
 }
 
-/// Read an ELF file's e_machine, or None if it isn't a readable ELF. Reads only
+/// Read an ELF file's `e_machine`, or None if it isn't a readable ELF. Reads only
 /// the leading header bytes so probing large shared libraries stays cheap.
 fn elf_machine(path: &Path) -> Option<u16> {
     use std::io::Read;
@@ -102,7 +102,7 @@ fn elf_machine(path: &Path) -> Option<u16> {
     })
 }
 
-/// Set DT_RUNPATH (or DT_RPATH when `force`). Reuses the existing string slot
+/// Set `DT_RUNPATH` (or `DT_RPATH` when `force`). Reuses the existing string slot
 /// when the new value fits, otherwise appends to .dynstr; adds the dynamic
 /// entry when absent. Growth is resolved later by the layout engine.
 pub fn set(image: &mut ElfImage<'_>, new: &str, force: bool) -> Result<()> {

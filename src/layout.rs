@@ -1,12 +1,12 @@
 //! Assign on-disk offsets after ops change section sizes, then hand off to the
 //! serializer. Mirrors patchelf's `rewriteSectionsLibrary` with the program
 //! header table relocated to the end of the file: grown sections, a fresh copy
-//! of the (extended) PHT, and the SHT are appended in a new PT_LOAD segment.
+//! of the (extended) PHT, and the SHT are appended in a new `PT_LOAD` segment.
 //!
-//! This works for both ET_DYN and ET_EXEC: the relocated sections are reached
+//! This works for both `ET_DYN` and `ET_EXEC`: the relocated sections are reached
 //! through DT_* tags and PT_* segments (which we fix up), not absolute code
 //! references, so placing them at a fresh high virtual address is safe.
-//! patchelf uses a separate shifting strategy for ET_EXEC only to keep the PHT
+//! patchelf uses a separate shifting strategy for `ET_EXEC` only to keep the PHT
 //! at the start for very old kernels; we relocate it like the library path.
 
 use crate::codec;
@@ -49,7 +49,7 @@ fn section_len(image: &ElfImage<'_>, i: usize) -> u64 {
 }
 
 /// Re-encode the dynamic array into its section data, zero-padding to the
-/// header size so a shrunk array's trailing DT_NULL still terminates. Called
+/// header size so a shrunk array's trailing `DT_NULL` still terminates. Called
 /// once, after address fixups, so it captures the final entry values.
 fn sync_dynamic(image: &mut ElfImage<'_>) -> Result<()> {
     let Some(idx) = dyn_idx(image) else {
@@ -106,42 +106,33 @@ pub fn finalize(
             "unsupported ELF type for relayout".into(),
         ));
     }
-    relayout(image, original, grown, page_size, reclaim, out)
+    relayout(image, original, &grown, page_size, reclaim, out)
 }
 
 fn page_size_for(image: &ElfImage<'_>, forced: Option<u64>) -> u64 {
-    if let Some(p) = forced {
-        return p;
-    }
     // Per-arch minimum page sizes, mirroring patchelf/gold.
     const EM_PPC: u16 = 20;
     const EM_PPC64: u16 = 21;
     const EM_AARCH64: u16 = 183;
     const EM_MIPS: u16 = 8;
+    if let Some(p) = forced {
+        return p;
+    }
     match image.ehdr.machine {
         EM_PPC | EM_PPC64 | EM_AARCH64 | EM_MIPS => 0x10000,
         _ => 0x1000,
     }
 }
 
-fn relayout(
+/// Pick the sections to lay out fresh. When reclaiming, drop a region a prior
+/// relayout appended (it starts at the relocated PHT, offset == phoff) and
+/// return its start so its contents are placed anew alongside the grown
+/// sections, reusing the space instead of stacking a new region.
+fn relocation_set(
     image: &mut ElfImage<'_>,
-    original: &[u8],
-    grown: Vec<usize>,
-    page_size: Option<u64>,
+    grown: &[usize],
     reclaim: bool,
-    out: &mut dyn std::io::Write,
-) -> Result<()> {
-    let sec_align = codec::dyn_size(image.enc.class) as u64; // sizeof(Elf_Off)
-    let phdr_size = codec::phdr_size(image.enc.class) as u64;
-    let shdr_size = codec::shdr_size(image.enc.class) as u64;
-    let ehdr_size = image.ehdr.ehsize as u64;
-    let orig_len = original.len() as u64;
-
-    // Reclaim a region appended by a previous relayout rather than stacking a
-    // fresh one: that segment begins exactly at the relocated PHT
-    // (offset == phoff). Everything living in it is laid out anew together with
-    // the newly grown sections, so repeated patching reuses the same space.
+) -> (Option<u64>, Vec<usize>) {
     let prior = reclaim
         .then(|| {
             image
@@ -155,7 +146,7 @@ fn relayout(
         image.phdrs.remove(i);
     }
     // Iterating in index order yields a sorted, duplicate-free list directly.
-    let relocate: Vec<usize> = (0..image.shdrs.len())
+    let relocate = (0..image.shdrs.len())
         .filter(|&i| {
             let s = &image.shdrs[i];
             s.sh_type != sht::NOBITS
@@ -163,6 +154,24 @@ fn relayout(
                 && (grown.contains(&i) || region_start.is_some_and(|r| s.offset >= r))
         })
         .collect();
+    (region_start, relocate)
+}
+
+fn relayout(
+    image: &mut ElfImage<'_>,
+    original: &[u8],
+    grown: &[usize],
+    page_size: Option<u64>,
+    reclaim: bool,
+    out: &mut dyn std::io::Write,
+) -> Result<()> {
+    let sec_align = codec::dyn_size(image.enc.class) as u64; // sizeof(Elf_Off)
+    let phdr_size = codec::phdr_size(image.enc.class) as u64;
+    let shdr_size = codec::shdr_size(image.enc.class) as u64;
+    let ehdr_size = u64::from(image.ehdr.ehsize);
+    let orig_len = original.len() as u64;
+
+    let (region_start, relocate) = relocation_set(image, grown, reclaim);
 
     let page = page_size_for(image, page_size);
     let mut align = page;
@@ -289,13 +298,13 @@ fn any_field(
     image.section_data[sec].chunks_exact(stride).any(|r| {
         let v = match width {
             8 => e.read_u64(r, fo),
-            _ => e.read_u32(r, fo) as u64,
+            _ => u64::from(e.read_u32(r, fo)),
         };
         pred(v)
     })
 }
 
-/// Error if any relocation target (r_offset) or symbol value (st_value) lands
+/// Error if any relocation target (`r_offset`) or symbol value (`st_value`) lands
 /// inside one of the address ranges about to be relocated.
 fn assert_no_address_refs(image: &ElfImage<'_>, ranges: &[(u64, u64)]) -> Result<()> {
     if ranges.is_empty() {
@@ -331,7 +340,7 @@ fn assert_no_address_refs(image: &ElfImage<'_>, ranges: &[(u64, u64)]) -> Result
     Ok(())
 }
 
-/// Re-point PT_PHDR/PT_DYNAMIC/PT_INTERP and the ld-cache PT_NOTE at their
+/// Re-point `PT_PHDR/PT_DYNAMIC/PT_INTERP` and the ld-cache `PT_NOTE` at their
 /// (possibly moved) targets.
 fn sync_segments(image: &mut ElfImage<'_>, ldcache_phdr: Option<usize>) {
     let phoff = image.ehdr.phoff;
@@ -386,7 +395,7 @@ fn set_segment(p: &mut Phdr, off: u64, addr: u64, size: u64) {
 }
 
 /// Rebase the address-valued dynamic tags that point into a relocated section,
-/// then refresh DT_STRSZ. The tag set mirrors glibc's ADJUST_DYN_INFO plus the
+/// then refresh `DT_STRSZ`. The tag set mirrors glibc's `ADJUST_DYN_INFO` plus the
 /// init/fini and array pointers: anything the loader treats as an address. By
 /// keying on the old address range rather than a section name, every moved
 /// section is handled, not just the few an operation is known to touch.
@@ -433,15 +442,15 @@ fn fixup_dynamic_addrs(image: &mut ElfImage<'_>, moves: &[MovedSection]) {
     }
 }
 
-/// DT_MIPS_RLD_MAP_REL holds the offset from the tag's own in-memory address to
-/// the .rld_map debug pointer, so it must be recomputed whenever .dynamic or
-/// .rld_map moves. Absent .rld_map, mirror patchelf and store 0.
+/// `DT_MIPS_RLD_MAP_REL` holds the offset from the tag's own in-memory address to
+/// the .`rld_map` debug pointer, so it must be recomputed whenever .dynamic or
+/// .`rld_map` moves. Absent .`rld_map`, mirror patchelf and store 0.
 fn fixup_mips_rld_map_rel(image: &mut ElfImage<'_>) {
     if !image.dynamic.iter().any(|d| d.tag == dt::MIPS_RLD_MAP_REL) {
         return;
     }
     let stride = codec::dyn_size(image.enc.class) as u64;
-    let dyn_addr = dyn_idx(image).map(|i| image.shdrs[i].addr).unwrap_or(0);
+    let dyn_addr = dyn_idx(image).map_or(0, |i| image.shdrs[i].addr);
     let rld = image.find_section(".rld_map").map(|i| image.shdrs[i].addr);
     let mask = if image.enc.class == Class::Elf32 {
         0xffff_ffff
@@ -450,9 +459,9 @@ fn fixup_mips_rld_map_rel(image: &mut ElfImage<'_>) {
     };
     for (i, d) in image.dynamic.iter_mut().enumerate() {
         if d.tag == dt::MIPS_RLD_MAP_REL {
-            d.val = rld
-                .map(|r| r.wrapping_sub(i as u64 * stride).wrapping_sub(dyn_addr) & mask)
-                .unwrap_or(0);
+            d.val = rld.map_or(0, |r| {
+                r.wrapping_sub(i as u64 * stride).wrapping_sub(dyn_addr) & mask
+            });
         }
     }
 }

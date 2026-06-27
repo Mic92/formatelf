@@ -24,9 +24,9 @@ fn exercise(data: &[u8]) {
     }
 }
 
-/// Regression: an extended section count (section 0's sh_size under the
-/// SHN_XINDEX escape) is attacker-controlled and was fed straight into
-/// Vec::with_capacity, aborting on a multi-gigabyte allocation. A count that
+/// Regression: an extended section count (section 0's `sh_size` under the
+/// `SHN_XINDEX` escape) is attacker-controlled and was fed straight into
+/// `Vec::with_capacity`, aborting on a multi-gigabyte allocation. A count that
 /// cannot fit in the file must be rejected, not allocated.
 #[test]
 fn huge_section_count_is_rejected() {
@@ -47,7 +47,7 @@ fn huge_section_count_is_rejected() {
     assert!(formatelf::parser::parse(&data).is_err());
 }
 
-/// Regression: verify computed PT_LOAD memory ranges as `vaddr + memsz`, which
+/// Regression: verify computed `PT_LOAD` memory ranges as `vaddr + memsz`, which
 /// overflowed (debug panic / release wraparound) on a segment with an absurd
 /// address. Verification runs on untrusted parsed data and must stay panic-free.
 #[test]

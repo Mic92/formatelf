@@ -43,7 +43,7 @@ pub fn run(image: &ElfImage<'_>) -> Result<()> {
     let pht_end = image
         .ehdr
         .phoff
-        .saturating_add((image.phdrs.len() as u64).saturating_mul(image.ehdr.phentsize as u64));
+        .saturating_add((image.phdrs.len() as u64).saturating_mul(u64::from(image.ehdr.phentsize)));
     let covered = loads
         .iter()
         .any(|p| image.ehdr.phoff >= p.offset && pht_end <= p.offset.saturating_add(p.filesz));
@@ -56,10 +56,10 @@ pub fn run(image: &ElfImage<'_>) -> Result<()> {
     Ok(())
 }
 
-/// The kernel passes AT_PHDR = base_vaddr + e_phoff and the loader derives its
-/// load bias from PT_PHDR.p_vaddr, so for ET_DYN the table must satisfy
-/// PT_PHDR.p_vaddr == base_vaddr + e_phoff (base = the offset-0 PT_LOAD).
-/// Getting this wrong loads fine on lenient x86_64 glibc but aborts elsewhere.
+/// The kernel passes `AT_PHDR` = `base_vaddr` + `e_phoff` and the loader derives its
+/// load bias from `PT_PHDR.p_vaddr`, so for `ET_DYN` the table must satisfy
+/// `PT_PHDR.p_vaddr` == `base_vaddr` + `e_phoff` (base = the offset-0 `PT_LOAD`).
+/// Getting this wrong loads fine on lenient `x86_64` glibc but aborts elsewhere.
 fn phdr_anchor(image: &ElfImage<'_>, loads: &[&Phdr]) -> Result<()> {
     let Some(phdr) = image.phdrs.iter().find(|p| p.p_type == pt::PHDR) else {
         return Ok(());
@@ -81,7 +81,7 @@ fn phdr_anchor(image: &ElfImage<'_>, loads: &[&Phdr]) -> Result<()> {
 }
 
 /// Cross-check the dynamic array against the sections and segments it must
-/// agree with. These caught a real bug where DT_STRTAB kept pointing at the
+/// agree with. These caught a real bug where `DT_STRTAB` kept pointing at the
 /// pre-relayout .dynstr address.
 fn dynamic_consistency(image: &ElfImage<'_>) -> Result<()> {
     let dval = |tag: i64| image.dynamic.iter().find(|d| d.tag == tag).map(|d| d.val);

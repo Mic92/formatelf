@@ -21,7 +21,7 @@ fn main() -> ExitCode {
             println!("formatelf {VERSION}");
             ExitCode::SUCCESS
         }
-        Ok(Parsed::Run(args)) => match run(args) {
+        Ok(Parsed::Run(args)) => match run(&args) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("formatelf: {e}");
@@ -35,7 +35,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(args: cli::Args) -> error::Result<()> {
+fn run(args: &cli::Args) -> error::Result<()> {
     if args.files.is_empty() {
         return Err(Error::Cli("no input files".into()));
     }
@@ -83,7 +83,7 @@ fn run(args: cli::Args) -> error::Result<()> {
         }
         if mutating {
             let dest = args.output.as_ref().unwrap_or(file);
-            write_output(&mut image, &data, &args, &fd, dest)?;
+            write_output(&mut image, &data, args, &fd, dest)?;
         }
     }
     Ok(())
@@ -132,7 +132,9 @@ fn write_output(
 }
 
 fn is_read_only(op: &cli::Operation) -> bool {
-    use cli::Operation::*;
+    use cli::Operation::{
+        PrintExecstack, PrintInterpreter, PrintNeeded, PrintOsAbi, PrintRpath, PrintSoname,
+    };
     matches!(
         op,
         PrintInterpreter | PrintOsAbi | PrintSoname | PrintRpath | PrintNeeded | PrintExecstack

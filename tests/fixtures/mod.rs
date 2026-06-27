@@ -47,7 +47,7 @@ pub fn ours() -> &'static Path {
 /// Run a read-only op on `file` and return its stdout, asserting success.
 pub fn out(bin: &Path, op: &str, file: &Path) -> String {
     let o = Command::new(bin).arg(op).arg(file).output().unwrap();
-    assert!(o.status.success(), "{op} on {file:?} failed");
+    assert!(o.status.success(), "{op} on {} failed", file.display());
     String::from_utf8_lossy(&o.stdout).into_owned()
 }
 
@@ -86,8 +86,8 @@ pub fn guard() -> Option<PathBuf> {
     r
 }
 
-/// The loader resolves dynamic strings via DT_STRTAB's address, not the section
-/// header, so after a relayout DT_STRTAB must point at the relocated .dynstr.
+/// The loader resolves dynamic strings via `DT_STRTAB`'s address, not the section
+/// header, so after a relayout `DT_STRTAB` must point at the relocated .dynstr.
 pub fn assert_dynstr_synced(file: &Path) {
     use formatelf::ir::dt;
     let buf = std::fs::read(file).unwrap();
@@ -102,7 +102,7 @@ pub fn assert_dynstr_synced(file: &Path) {
     assert_eq!(strtab, dynstr, "DT_STRTAB not synced to moved .dynstr");
 }
 
-/// Path to the reference C patchelf, if it has been built. PATCHELF_REFERENCE
+/// Path to the reference C patchelf, if it has been built. `PATCHELF_REFERENCE`
 /// overrides the default relative path so tools that build in a copy of the
 /// tree (e.g. cargo-mutants) can still locate it.
 pub fn c_patchelf() -> Option<PathBuf> {
@@ -122,8 +122,7 @@ pub fn tool_available(cmd: &str, args: &[&str]) -> bool {
     Command::new(cmd)
         .args(args)
         .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+        .is_ok_and(|o| o.status.success())
 }
 
 fn dir() -> &'static Path {

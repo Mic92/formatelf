@@ -72,7 +72,7 @@ fn remove_rpath_is_idempotent() {
     });
 }
 
-/// add-needed then remove-needed is an inverse on the DT_NEEDED list (the
+/// add-needed then remove-needed is an inverse on the `DT_NEEDED` list (the
 /// reference reads back the original entries; orphaned strings may linger, so
 /// the file need not be byte-identical).
 #[test]
