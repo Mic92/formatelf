@@ -66,9 +66,24 @@ fn owned_spans<'a>(image: &'a ElfImage<'_>, original: &[u8]) -> Result<Vec<Span<
                 s.size
             )));
         }
+        // A section still borrowed from the input at its original offset is
+        // reproduced byte-for-byte by the gap copy, so it is not a delta. Skip
+        // it by pointer identity, avoiding the memcmp push() runs otherwise.
+        if let Cow::Borrowed(slice) = data {
+            if borrowed_offset(slice, original) == Some(s.offset) {
+                continue;
+            }
+        }
         push(s.offset, Cow::Borrowed(data.as_ref()));
     }
     Ok(spans)
+}
+
+/// If `slice` points inside `original`, return its byte offset there.
+fn borrowed_offset(slice: &[u8], original: &[u8]) -> Option<u64> {
+    let base = original.as_ptr() as usize;
+    let p = slice.as_ptr() as usize;
+    (p >= base && p + slice.len() <= base + original.len()).then(|| (p - base) as u64)
 }
 
 /// Stream the output front to back: changed spans at their offsets, original
