@@ -383,6 +383,38 @@ fn print_interpreter_works_without_section_headers() {
     );
 }
 
+/// Shared objects are often linked without a PT_PHDR segment. The loader then
+/// finds the program header table via e_phoff, so a relayout must still work:
+/// it just has no PT_PHDR entry to re-point.
+#[test]
+fn relayout_without_pt_phdr() {
+    if !fixtures::zig_available() {
+        return;
+    }
+    use formatelf::ir::pt;
+    let data = std::fs::read(sample("exe-dyn-le")).unwrap();
+    let mut img = formatelf::parser::parse(&data).unwrap();
+    img.phdrs.retain(|p| p.p_type != pt::PHDR);
+
+    let rpath = "/a/deliberately/long/rpath/that/forces/a/full/relayout";
+    let mods = formatelf::ops::Modifiers::default();
+    let mut report = formatelf::ops::Report::default();
+    formatelf::ops::apply(
+        &mut img,
+        &formatelf::cli::Operation::SetRpath(rpath.into()),
+        &mods,
+        &mut report,
+    )
+    .unwrap();
+    let mut out = Vec::new();
+    formatelf::layout::finalize(&mut img, &data, None, false, false, &mut out).unwrap();
+
+    let re = formatelf::parser::parse(&out).unwrap();
+    assert!(re.phdrs.iter().all(|p| p.p_type != pt::PHDR));
+    assert!(re.phdrs.iter().any(|p| p.p_type == pt::LOAD));
+    assert_eq!(formatelf::rpath::read(&re).unwrap(), rpath);
+}
+
 #[test]
 fn repeated_patching_reuses_the_appended_region() {
     let Some(_reference) = guard() else { return };

@@ -168,15 +168,11 @@ fn relayout(
     let mut align = page;
     let mut start_page = 0u64;
     let mut base_vaddr = u64::MAX;
-    let mut have_phdr_seg = false;
     for p in &image.phdrs {
         start_page = start_page.max(p.vaddr + p.memsz);
         align = align.max(p.align);
         if p.p_type == pt::LOAD {
             base_vaddr = base_vaddr.min(p.vaddr);
-        }
-        if p.p_type == pt::PHDR {
-            have_phdr_seg = true;
         }
     }
     let base_vaddr = if base_vaddr == u64::MAX {
@@ -184,11 +180,6 @@ fn relayout(
     } else {
         base_vaddr
     };
-    if !have_phdr_seg {
-        return Err(Error::Unsupported(
-            "no PT_PHDR segment; cannot relocate program headers".into(),
-        ));
-    }
     start_page = round_up(start_page, align);
 
     // One extra PHT entry for the new PT_LOAD.
