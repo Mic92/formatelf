@@ -20,7 +20,7 @@ pub(crate) fn build(image: &mut ElfImage<'_>) -> Result<()> {
             .dynamic
             .iter()
             .find(|d| d.tag == tag)
-            .and_then(|d| ir::cstr(strtab, d.val as u32))
+            .and_then(|d| ir::cstr(strtab, d.val))
     };
     let runpath = pick(dt::RUNPATH).or_else(|| pick(dt::RPATH)).unwrap_or("");
     let dirs: Vec<&str> = runpath.split(':').filter(|s| !s.is_empty()).collect();
@@ -82,14 +82,18 @@ fn add_note_section(image: &mut ElfImage<'_>, desc: &[u8]) -> Result<()> {
         }
     };
 
+    let u32_of = |n: usize| {
+        u32::try_from(n).map_err(|_| Error::Unsupported("ld-cache field too large".into()))
+    };
+
     let mut name = b"NixOS\0".to_vec();
-    let namesz = name.len() as u32;
+    let namesz = u32_of(name.len())?;
     while !name.len().is_multiple_of(4) {
         name.push(0);
     }
     let mut note = Vec::new();
     note.extend_from_slice(&u32b(namesz));
-    note.extend_from_slice(&u32b(desc.len() as u32));
+    note.extend_from_slice(&u32b(u32_of(desc.len())?));
     note.extend_from_slice(&u32b(NT_NIXOS_LD_CACHE));
     note.extend_from_slice(&name);
     note.extend_from_slice(desc);
@@ -112,7 +116,7 @@ fn add_note_section(image: &mut ElfImage<'_>, desc: &[u8]) -> Result<()> {
     if image.section_data.get(shstr).is_none() {
         return Err(Error::Missing("no section header string table".into()));
     }
-    let name_off = image.section_data[shstr].len() as u32;
+    let name_off = u32_of(image.section_data[shstr].len())?;
     image.section_data[shstr]
         .to_mut()
         .extend_from_slice(b".note.nixos.ldcache\0");

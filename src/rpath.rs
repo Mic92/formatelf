@@ -16,7 +16,7 @@ pub fn read(image: &ElfImage<'_>) -> Result<String> {
     let Some(strtab) = image.dynstr() else {
         return Ok(String::new());
     };
-    let get = |off: u64| ir::cstr(strtab, off as u32).unwrap_or_default().to_owned();
+    let get = |off: u64| ir::cstr(strtab, off).unwrap_or_default().to_owned();
     let mut rpath = String::new();
     for d in &image.dynamic {
         match d.tag {
@@ -133,7 +133,9 @@ pub(crate) fn set(image: &mut ElfImage<'_>, new: &str, force: bool) -> Result<()
         }
     }
 
-    let reuse = existing.first().map(|&i| image.dynamic[i].val as usize);
+    let reuse = existing
+        .first()
+        .map(|&i| ir::usize_at(image.dynamic[i].val));
     let off = dynstr_set(image.section_data[dynstr_idx].to_mut(), reuse, new);
     if existing.is_empty() {
         image.dynamic.insert(

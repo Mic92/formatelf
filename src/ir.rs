@@ -1,6 +1,8 @@
 //! Arch-agnostic ELF model: fields widened to 64-bit, native endianness.
 //! Class/byte order recorded only so the serializer can re-encode.
 
+use crate::error::{Error, Result};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Class {
     Elf32,
@@ -211,10 +213,24 @@ pub struct ElfImage<'a> {
     pub interp_fallback: Option<Vec<u8>>,
 }
 
+/// Convert a u64 ELF offset or size to a `usize` index. A value beyond `usize`,
+/// only reachable on a 32-bit target, saturates so the subsequent bounds check
+/// rejects it instead of wrapping.
+#[must_use]
+pub(crate) fn usize_at(x: u64) -> usize {
+    usize::try_from(x).unwrap_or(usize::MAX)
+}
+
+/// Checked `u64`->`usize` for allocation sizes. On a 32-bit target a value
+/// beyond the address space errors instead of saturating into a huge request.
+pub(crate) fn try_usize(x: u64) -> Result<usize> {
+    usize::try_from(x).map_err(|_| Error::Unsupported(format!("{x:#x} exceeds the address space")))
+}
+
 /// Read a NUL-terminated string starting at `off` in a string table.
 #[must_use]
-pub fn cstr(tab: &[u8], off: u32) -> Option<&str> {
-    let tab = tab.get(off as usize..)?;
+pub fn cstr(tab: &[u8], off: u64) -> Option<&str> {
+    let tab = tab.get(usize_at(off)..)?;
     let end = tab.iter().position(|&b| b == 0).unwrap_or(tab.len());
     std::str::from_utf8(&tab[..end]).ok()
 }
@@ -223,7 +239,7 @@ impl ElfImage<'_> {
     #[must_use]
     pub fn section_name(&self, idx: usize) -> Option<&str> {
         let strtab = self.section_data.get(self.ehdr.shstrndx as usize)?;
-        cstr(strtab, self.shdrs.get(idx)?.name)
+        cstr(strtab, u64::from(self.shdrs.get(idx)?.name))
     }
 
     #[must_use]

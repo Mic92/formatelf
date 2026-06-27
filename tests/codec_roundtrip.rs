@@ -30,7 +30,7 @@ fn check(path: &std::path::Path) {
 
     let phsize = codec::phdr_size(img.enc.class);
     for (i, p) in img.phdrs.iter().enumerate() {
-        let off = img.ehdr.phoff as usize + i * phsize;
+        let off = usize::try_from(img.ehdr.phoff).unwrap() + i * phsize;
         let mut buf = Vec::new();
         codec::write_phdr(img.enc, p, &mut buf).unwrap();
         assert_eq!(
@@ -43,7 +43,7 @@ fn check(path: &std::path::Path) {
 
     let shsize = codec::shdr_size(img.enc.class);
     for (i, s) in img.shdrs.iter().enumerate() {
-        let off = img.ehdr.shoff as usize + i * shsize;
+        let off = usize::try_from(img.ehdr.shoff).unwrap() + i * shsize;
         let mut buf = Vec::new();
         codec::write_shdr(img.enc, s, &mut buf).unwrap();
         assert_eq!(
@@ -65,7 +65,7 @@ fn check(path: &std::path::Path) {
             .iter()
             .find(|s| s.sh_type == 6) // SHT_DYNAMIC
             .expect("dynamic section present");
-        let off = dyn_sh.offset as usize;
+        let off = usize::try_from(dyn_sh.offset).unwrap();
         assert_eq!(
             buf,
             &data[off..off + buf.len()],

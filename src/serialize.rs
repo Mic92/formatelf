@@ -10,7 +10,7 @@ use std::io::Write;
 
 use crate::codec;
 use crate::error::{Error, Result};
-use crate::ir::{ElfImage, sht};
+use crate::ir::{ElfImage, sht, usize_at};
 
 /// A changed region placed at `at` in the output.
 struct Span<'a> {
@@ -26,7 +26,7 @@ fn owned_spans<'a>(image: &'a ElfImage<'_>, original: &[u8]) -> Result<Vec<Span<
     let enc = image.enc;
     let mut spans = Vec::new();
     let mut push = |at: u64, bytes: Cow<'a, [u8]>| {
-        let a = at as usize;
+        let a = usize_at(at);
         if bytes.is_empty() || original.get(a..a + bytes.len()) == Some(bytes.as_ref()) {
             return;
         }
@@ -103,12 +103,12 @@ pub(crate) fn write_to(
     let fill = |out: &mut dyn Write, at: u64, len: u64| -> Result<()> {
         let start = at.min(orig_len);
         let avail = (orig_len - start).min(len);
-        io(out.write_all(&original[start as usize..(start + avail) as usize]))?;
+        io(out.write_all(&original[usize_at(start)..usize_at(start + avail)]))?;
         let mut pad = len - avail;
         let zeros = [0u8; 4096];
         while pad > 0 {
             let n = pad.min(zeros.len() as u64);
-            io(out.write_all(&zeros[..n as usize]))?;
+            io(out.write_all(&zeros[..usize_at(n)]))?;
             pad -= n;
         }
         Ok(())
@@ -146,7 +146,7 @@ pub(crate) fn write_to(
 /// # Errors
 /// Propagates any serialization error from [`write_to`].
 pub fn write(image: &ElfImage<'_>, original: &[u8], total: u64) -> Result<Vec<u8>> {
-    let mut buf = Vec::with_capacity(total as usize);
+    let mut buf = Vec::with_capacity(crate::ir::try_usize(total)?);
     write_to(image, original, total, &mut buf)?;
     Ok(buf)
 }

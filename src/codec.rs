@@ -123,17 +123,17 @@ fn ehdr_counts(h: &Ehdr, phnum: usize, shnum: usize) -> (u16, u16, u16) {
     let e_phnum = if phnum >= PN_XNUM as usize {
         PN_XNUM
     } else {
-        phnum as u16
+        u16::try_from(phnum).unwrap_or(PN_XNUM)
     };
     let e_shnum = if shnum >= SHN_LORESERVE as usize {
         0
     } else {
-        shnum as u16
+        u16::try_from(shnum).unwrap_or(0)
     };
     let e_shstrndx = if h.shstrndx >= SHN_LORESERVE {
         SHN_XINDEX
     } else {
-        h.shstrndx as u16
+        u16::try_from(h.shstrndx).unwrap_or(SHN_XINDEX)
     };
     (e_phnum, e_shnum, e_shstrndx)
 }
@@ -344,14 +344,14 @@ pub(crate) fn read_dyn(enc: Encoding, data: &[u8]) -> Result<DynEntry> {
         Class::Elf64 => {
             let d: &elf::Dyn64<Endianness> = pod(data)?;
             Ok(DynEntry {
-                tag: d.d_tag.get(e) as i64,
+                tag: i64::from_ne_bytes(d.d_tag.get(e).to_ne_bytes()),
                 val: d.d_val.get(e),
             })
         }
         Class::Elf32 => {
             let d: &elf::Dyn32<Endianness> = pod(data)?;
             Ok(DynEntry {
-                tag: i64::from(d.d_tag.get(e) as i32),
+                tag: i64::from(i32::from_ne_bytes(d.d_tag.get(e).to_ne_bytes())),
                 val: u64::from(d.d_val.get(e)),
             })
         }
@@ -365,7 +365,7 @@ pub fn write_dyn(enc: Encoding, d: &DynEntry, out: &mut Vec<u8>) -> Result<()> {
     match enc.class {
         Class::Elf64 => {
             let h = elf::Dyn64::<Endianness> {
-                d_tag: U64::new(e, d.tag as u64),
+                d_tag: U64::new(e, u64::from_ne_bytes(d.tag.to_ne_bytes())),
                 d_val: U64::new(e, d.val),
             };
             out.extend_from_slice(object::bytes_of(&h));
@@ -373,8 +373,10 @@ pub fn write_dyn(enc: Encoding, d: &DynEntry, out: &mut Vec<u8>) -> Result<()> {
         Class::Elf32 => {
             // d_tag is Elf32_Sword: the standard tags use its 32-bit pattern, so
             // truncation is intentional. Only d_val carries addresses/sizes.
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let d_tag = d.tag as u32;
             let h = elf::Dyn32::<Endianness> {
-                d_tag: U32::new(e, d.tag as u32),
+                d_tag: U32::new(e, d_tag),
                 d_val: U32::new(e, narrow(d.val, "d_val")?),
             };
             out.extend_from_slice(object::bytes_of(&h));

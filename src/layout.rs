@@ -59,7 +59,8 @@ fn sync_dynamic(image: &mut ElfImage<'_>) -> Result<()> {
     for d in &image.dynamic {
         codec::write_dyn(image.enc, d, &mut bytes)?;
     }
-    bytes.resize((image.shdrs[idx].size as usize).max(bytes.len()), 0);
+    let want = crate::ir::try_usize(image.shdrs[idx].size)?;
+    bytes.resize(want.max(bytes.len()), 0);
     image.section_data[idx] = std::borrow::Cow::Owned(bytes);
     Ok(())
 }

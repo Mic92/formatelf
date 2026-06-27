@@ -4,12 +4,12 @@
 
 use crate::codec;
 use crate::error::{Error, Result};
-use crate::ir::{DynEntry, Ehdr, ElfImage, Encoding, Phdr, Shdr, dt, pt, sht};
+use crate::ir::{DynEntry, Ehdr, ElfImage, Encoding, Phdr, Shdr, dt, pt, sht, usize_at};
 
 fn slice<'a>(data: &'a [u8], off: u64, len: u64, what: &str) -> Result<&'a [u8]> {
-    let off = off as usize;
+    let off = usize_at(off);
     let end = off
-        .checked_add(len as usize)
+        .checked_add(usize_at(len))
         .ok_or_else(|| Error::Parse(format!("{what}: offset overflow")))?;
     data.get(off..end)
         .ok_or_else(|| Error::Parse(format!("{what}: out of bounds")))
@@ -34,15 +34,15 @@ pub fn parse(data: &[u8]) -> Result<ElfImage<'_>> {
 
     let phsize = codec::phdr_size(enc.class) as u64;
     let phbytes = table(data, ehdr.phoff, phnum, phsize, "program headers")?;
-    let mut phdrs = Vec::with_capacity(phnum as usize);
-    for chunk in phbytes.chunks_exact(phsize as usize) {
+    let mut phdrs = Vec::with_capacity(usize_at(phnum));
+    for chunk in phbytes.chunks_exact(usize_at(phsize)) {
         phdrs.push(codec::read_phdr(enc, chunk)?);
     }
 
     let shsize = codec::shdr_size(enc.class) as u64;
     let shbytes = table(data, ehdr.shoff, shnum, shsize, "section headers")?;
-    let mut shdrs = Vec::with_capacity(shnum as usize);
-    for chunk in shbytes.chunks_exact(shsize as usize) {
+    let mut shdrs = Vec::with_capacity(usize_at(shnum));
+    for chunk in shbytes.chunks_exact(usize_at(shsize)) {
         shdrs.push(codec::read_shdr(enc, chunk)?);
     }
 
@@ -79,7 +79,7 @@ fn read_dyn_array(data: &[u8], enc: Encoding, off: u64, filesz: u64) -> Result<V
     let dsize = codec::dyn_size(enc.class) as u64;
     let bytes = slice(data, off, filesz - filesz % dsize, "dynamic")?;
     let mut out = Vec::new();
-    for chunk in bytes.chunks_exact(dsize as usize) {
+    for chunk in bytes.chunks_exact(usize_at(dsize)) {
         let entry = codec::read_dyn(enc, chunk)?;
         let done = entry.tag == 0; // DT_NULL terminates the array
         out.push(entry);

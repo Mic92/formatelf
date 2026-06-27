@@ -467,7 +467,7 @@ fn rename_dynamic_symbols_matches_reference() {
         .filter_map(|i| {
             let b = &img.section_data[dynsym][i * 24..];
             let st_name = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
-            formatelf::ir::cstr(&img.section_data[dynstr], st_name)
+            formatelf::ir::cstr(&img.section_data[dynstr], u64::from(st_name))
         })
         .find(|n| n.bytes().next().is_some_and(|c| c.is_ascii_alphabetic()))
         .unwrap()

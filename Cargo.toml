@@ -34,11 +34,6 @@ panic = "abort"
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }
-# Decoding/encoding ELF casts between integer widths on purpose; offsets and
-# sizes are bounded by the file, not the pointer width.
-cast_possible_truncation = "allow"
-cast_possible_wrap = "allow"
-cast_sign_loss = "allow"
 # ELF field names differ only by standard prefixes (e_phnum/e_shnum,
 # rel/rela strides); renaming them to satisfy the lint would obscure intent.
 similar_names = "allow"

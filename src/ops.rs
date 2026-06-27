@@ -117,7 +117,7 @@ pub(crate) fn dynstr_append(buf: &mut Vec<u8>, s: &str) -> u64 {
 /// the slot keeps re-setting the same value free of growth (and idempotent).
 pub(crate) fn dynstr_set(buf: &mut Vec<u8>, reuse: Option<usize>, s: &str) -> u64 {
     if let Some(off) = reuse {
-        let old_len = ir::cstr(buf, off as u32).map_or(0, str::len);
+        let old_len = ir::cstr(buf, off as u64).map_or(0, str::len);
         if s.len() <= old_len {
             buf[off..off + s.len()].copy_from_slice(s.as_bytes());
             buf[off + s.len()] = 0;
@@ -151,7 +151,7 @@ fn set_soname(image: &mut ElfImage<'_>, name: &str) -> Result<()> {
     require_dynamic(image)?;
     let dynstr_idx = dynstr_section(image)?;
     let existing = image.dynamic.iter().position(|d| d.tag == dt::SONAME);
-    let reuse = existing.map(|i| image.dynamic[i].val as usize);
+    let reuse = existing.map(|i| ir::usize_at(image.dynamic[i].val));
     let off = dynstr_set(image.section_data[dynstr_idx].to_mut(), reuse, name);
     match existing {
         Some(i) => image.dynamic[i].val = off,
@@ -187,7 +187,7 @@ fn remove_needed(image: &mut ElfImage<'_>, lib: &str) -> Result<()> {
         .dynamic
         .iter()
         .filter(|d| d.tag == dt::NEEDED)
-        .filter(|d| ir::cstr(&image.section_data[dynstr_idx], d.val as u32) == Some(lib))
+        .filter(|d| ir::cstr(&image.section_data[dynstr_idx], d.val) == Some(lib))
         .map(|d| d.val)
         .collect();
     image
@@ -204,7 +204,7 @@ fn replace_needed(image: &mut ElfImage<'_>, old: &str, new: &str) -> Result<()> 
         .iter()
         .enumerate()
         .filter(|(_, d)| d.tag == dt::NEEDED)
-        .filter(|(_, d)| ir::cstr(&image.section_data[dynstr_idx], d.val as u32) == Some(old))
+        .filter(|(_, d)| ir::cstr(&image.section_data[dynstr_idx], d.val) == Some(old))
         .map(|(i, _)| i)
         .collect();
     if matches.is_empty() {
@@ -243,7 +243,7 @@ fn clear_symbol_version(image: &mut ElfImage<'_>, sym: &str) -> Result<()> {
     for i in 0..count {
         // st_name (u32) is the first field of both Elf32_Sym and Elf64_Sym.
         let st_name = e.read_u32(&image.section_data[dynsym], i * sym_size);
-        if ir::cstr(&image.section_data[dynstr], st_name) == Some(sym) {
+        if ir::cstr(&image.section_data[dynstr], u64::from(st_name)) == Some(sym) {
             e.write_u16(image.section_data[versym].to_mut(), i * 2, VER_NDX_GLOBAL);
         }
     }
@@ -350,7 +350,7 @@ fn interpreter(image: &ElfImage<'_>) -> Result<String> {
 fn dyn_string(image: &ElfImage<'_>, tag: i64) -> Option<String> {
     let strtab = image.dynstr()?;
     let entry = image.dynamic.iter().find(|d| d.tag == tag)?;
-    ir::cstr(strtab, entry.val as u32).map(str::to_owned)
+    ir::cstr(strtab, entry.val).map(str::to_owned)
 }
 
 fn soname(image: &ElfImage<'_>) -> Option<String> {
@@ -370,7 +370,7 @@ pub(crate) fn needed(image: &ElfImage<'_>) -> Result<Vec<String>> {
         .iter()
         .take_while(|d| d.tag != dt::NULL)
         .filter(|d| d.tag == dt::NEEDED)
-        .filter_map(|d| ir::cstr(strtab, d.val as u32).map(str::to_owned))
+        .filter_map(|d| ir::cstr(strtab, d.val).map(str::to_owned))
         .collect())
 }
 

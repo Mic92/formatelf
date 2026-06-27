@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 
 use crate::error::{Error, Result};
-use crate::ir::{Class, ElfImage, Endian, sht};
+use crate::ir::{Class, ElfImage, Endian, sht, usize_at};
 
 fn enc(big: bool) -> Endian {
     if big { Endian::Big } else { Endian::Little }
@@ -35,6 +35,9 @@ fn wr_uptr(big: bool, elf64: bool, b: &mut [u8], o: usize, v: u64) {
     if elf64 {
         enc(big).write_u64(b, o, v);
     } else {
+        // ELF32 stores a 32-bit word here; `v` is an address or bloom word that
+        // fits by construction, so the narrowing is intentional.
+        #[allow(clippy::cast_possible_truncation)]
         enc(big).write_u32(b, o, v as u32);
     }
 }
@@ -108,7 +111,8 @@ pub(crate) fn rename_dynamic_symbols(
         return Ok(());
     }
     for (i, new) in &renames {
-        let off = image.section_data[dynstr].len() as u32;
+        let off = u32::try_from(image.section_data[dynstr].len())
+            .map_err(|_| Error::Parse(".dynstr exceeds 32-bit st_name range".into()))?;
         image.section_data[dynstr]
             .to_mut()
             .extend_from_slice(new.as_bytes());
@@ -120,7 +124,7 @@ pub(crate) fn rename_dynamic_symbols(
     // otherwise walk the whole symbol table separately.
     let (gnu_hashes, sysv_hashes) = symbol_hashes(image, dynsym, dynstr, symsize, nsyms);
     let reorder = rebuild_gnu_hash(image, &gnu_hashes, nsyms)?;
-    rebuild_sysv_hash(image, &sysv_hashes, nsyms, reorder.as_ref());
+    rebuild_sysv_hash(image, &sysv_hashes, nsyms, reorder.as_ref())?;
     Ok(())
 }
 
@@ -178,7 +182,7 @@ fn rebuild_gnu_hash(
     let big = image.enc.endian == Endian::Big;
     let elf64 = image.enc.class == Class::Elf64;
     let word = if elf64 { 8 } else { 4 };
-    let wordbits = (word * 8) as u32;
+    let wordbits: u32 = if elf64 { 64 } else { 32 };
 
     let data = &image.section_data[gh];
     if data.len() < 16 {
@@ -247,7 +251,9 @@ fn rebuild_gnu_hash(
     for (new_i, e) in entries.iter().enumerate() {
         let o = buckets_off + e.bucket * 4;
         if rd_u32(big, data, o) == 0 {
-            wr_u32(big, data, o, (new_i + symndx) as u32);
+            let v = u32::try_from(new_i + symndx)
+                .map_err(|_| Error::Parse("symbol index exceeds 32 bits".into()))?;
+            wr_u32(big, data, o, v);
         }
     }
     // Chain word per symbol: low bit set marks the last entry in a bucket.
@@ -264,19 +270,20 @@ fn rebuild_sysv_hash(
     sysv_hashes: &[u32],
     nsyms: usize,
     reorder: Option<&Reorder>,
-) {
+) -> Result<()> {
     let Some(hash) = image.find_section(".hash") else {
-        return;
+        return Ok(());
     };
     let big = image.enc.endian == Endian::Big;
     let data = &image.section_data[hash];
     if data.len() < 8 {
-        return;
+        return Ok(());
     }
-    let num_buckets = rd_u32(big, data, 0) as usize;
+    let num_buckets_u32 = rd_u32(big, data, 0);
+    let num_buckets = num_buckets_u32 as usize;
     let nchain = rd_u32(big, data, 4) as usize;
     if num_buckets == 0 || 8 + (num_buckets + nchain) * 4 > data.len() {
-        return;
+        return Ok(());
     }
     let buckets_off = 8;
     let chain_off = buckets_off + num_buckets * 4;
@@ -289,7 +296,7 @@ fn rebuild_sysv_hash(
         _ => new,
     };
     let names: Vec<u32> = (first..nsyms)
-        .map(|i| sysv_hashes[old_index(i)] % num_buckets as u32)
+        .map(|i| sysv_hashes[old_index(i)] % num_buckets_u32)
         .collect();
     let data = image.section_data[hash].to_mut();
     for b in &mut data[buckets_off..buckets_off + (num_buckets + nchain) * 4] {
@@ -299,8 +306,11 @@ fn rebuild_sysv_hash(
         let bo = buckets_off + bucket as usize * 4;
         let prev = rd_u32(big, data, bo);
         wr_u32(big, data, chain_off + i * 4, prev);
-        wr_u32(big, data, bo, i as u32);
+        let v =
+            u32::try_from(i).map_err(|_| Error::Parse("symbol index exceeds 32 bits".into()))?;
+        wr_u32(big, data, bo, v);
     }
+    Ok(())
 }
 
 /// Move fixed-stride records in `data[base..]` so record at old position p ends
@@ -343,7 +353,7 @@ fn remap_reloc_symbols(image: &mut ElfImage<'_>, symndx: usize, old2new: &[usize
             } else {
                 (8, 0xff)
             };
-            let old = (info >> sym_shift) as usize;
+            let old = usize_at(info >> sym_shift);
             let new = remap(old);
             if new != old {
                 wr_uptr(
