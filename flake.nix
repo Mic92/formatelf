@@ -26,7 +26,7 @@
         default = pkgs.callPackage ./package.nix { };
       });
 
-      formatter = forAll (pkgs: treefmtEval.${pkgs.system}.config.build.wrapper);
+      formatter = forAll (pkgs: treefmtEval.${pkgs.stdenv.hostPlatform.system}.config.build.wrapper);
 
       checks = forAll (
         pkgs:
@@ -35,14 +35,14 @@
           prefix = p: lib.mapAttrs' (n: lib.nameValuePair "${p}-${n}");
         in
         {
-          formatting = treefmtEval.${pkgs.system}.config.build.check self;
+          formatting = treefmtEval.${pkgs.stdenv.hostPlatform.system}.config.build.check self;
 
           clippy = pkgs.callPackage ./clippy.nix {
-            formatelf = self.packages.${pkgs.system}.default;
+            formatelf = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
           };
         }
-        // prefix "package" self.packages.${pkgs.system}
-        // prefix "devShell" self.devShells.${pkgs.system}
+        // prefix "package" self.packages.${pkgs.stdenv.hostPlatform.system}
+        // prefix "devShell" self.devShells.${pkgs.stdenv.hostPlatform.system}
       );
 
       devShells = forAll (
