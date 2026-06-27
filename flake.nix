@@ -22,9 +22,19 @@
       treefmtEval = forAll (pkgs: treefmt-nix.lib.evalModule pkgs ./treefmt.nix);
     in
     {
-      packages = forAll (pkgs: {
-        default = pkgs.callPackage ./package.nix { };
-      });
+      packages = forAll (
+        pkgs:
+        let
+          formatelf = pkgs.callPackage ./package.nix { };
+        in
+        {
+          default = formatelf;
+          inherit formatelf;
+        }
+        // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          autoFormatelfHook = pkgs.callPackage ./hook.nix { inherit formatelf; };
+        }
+      );
 
       formatter = forAll (pkgs: treefmtEval.${pkgs.stdenv.hostPlatform.system}.config.build.wrapper);
 

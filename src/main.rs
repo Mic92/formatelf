@@ -7,6 +7,26 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn main() -> ExitCode {
     let raw: Vec<std::ffi::OsString> = std::env::args_os().collect();
+
+    // Multi-call (busybox-style): the auto-patchelf personality is selected by
+    // argv[0], so a `auto-formatelf`/`auto-patchelf` symlink dispatches here.
+    let prog = raw
+        .first()
+        .and_then(|a| std::path::Path::new(a).file_name())
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if prog.starts_with("auto-") {
+        return match formatelf::autoformatelf::parse_args(raw)
+            .and_then(|c| formatelf::autoformatelf::run(&c))
+        {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("auto-formatelf: {e}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+
     if raw.len() <= 1 {
         eprint!("{}", cli::HELP);
         return ExitCode::FAILURE;

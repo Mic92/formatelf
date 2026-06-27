@@ -1,3 +1,4 @@
+pub mod autoformatelf;
 pub mod cli;
 pub mod codec;
 pub mod error;
@@ -6,6 +7,7 @@ pub mod layout;
 pub mod ldcache;
 pub mod ops;
 pub mod parser;
+pub mod patch;
 pub mod rpath;
 pub mod serialize;
 pub mod symbols;
