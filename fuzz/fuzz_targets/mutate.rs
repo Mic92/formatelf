@@ -8,9 +8,9 @@ use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
 use arbitrary::Unstructured;
-use libfuzzer_sys::fuzz_target;
 use formatelf::cli::Operation;
 use formatelf::ops::{Modifiers, Report};
+use libfuzzer_sys::fuzz_target;
 
 /// Drop the section-header table (zeroing e_shoff/e_shnum/e_shstrndx) so the
 /// parser must recover .dynstr/.interp from segments, exercising the

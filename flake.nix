@@ -2,9 +2,15 @@
   description = "Modify the dynamic linker and RPATH of ELF executables";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs.treefmt-nix.url = "github:numtide/treefmt-nix";
+  inputs.treefmt-nix.inputs.nixpkgs.follows = "nixpkgs";
 
   outputs =
-    { nixpkgs, ... }:
+    {
+      self,
+      nixpkgs,
+      treefmt-nix,
+    }:
     let
       systems = [
         "x86_64-linux"
@@ -14,10 +20,17 @@
       ];
       forAll = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
       isLinux = system: nixpkgs.lib.hasSuffix "-linux" system;
+      treefmtEval = forAll (pkgs: treefmt-nix.lib.evalModule pkgs ./treefmt.nix);
     in
     {
       packages = forAll (pkgs: {
         default = pkgs.callPackage ./package.nix { };
+      });
+
+      formatter = forAll (pkgs: treefmtEval.${pkgs.system}.config.build.wrapper);
+
+      checks = forAll (pkgs: {
+        formatting = treefmtEval.${pkgs.system}.config.build.check self;
       });
 
       devShells = forAll (
