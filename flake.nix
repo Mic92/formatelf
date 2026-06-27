@@ -36,6 +36,20 @@
         }
       );
 
+      # Complex real-world consumers of the auto-formatelf setup hook. Kept out
+      # of `checks` so a plain `nix flake check` does not pull large binaries.
+      examples = nixpkgs.lib.genAttrs [ "x86_64-linux" ] (
+        system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+        in
+        {
+          discord = pkgs.callPackage ./examples/discord.nix {
+            autoFormatelfHook = self.packages.${system}.autoFormatelfHook;
+          };
+        }
+      );
+
       formatter = forAll (pkgs: treefmtEval.${pkgs.stdenv.hostPlatform.system}.config.build.wrapper);
 
       checks = forAll (
