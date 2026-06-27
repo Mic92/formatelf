@@ -564,7 +564,8 @@ fn adds_gnu_stack_segment_when_absent() {
     .unwrap();
     assert_eq!(img.phdrs.len(), before + 1, "a new phdr should be appended");
 
-    let bytes = formatelf::layout::finalize(&mut img, &orig, None, false, false).unwrap();
+    let mut bytes = Vec::new();
+    formatelf::layout::finalize(&mut img, &orig, None, false, false, &mut bytes).unwrap();
     let out = formatelf::parser::parse(&bytes).unwrap();
     let gs = out
         .phdrs

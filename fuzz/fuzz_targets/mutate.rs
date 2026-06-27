@@ -99,7 +99,8 @@ fuzz_target!(|data: &[u8]| {
         let _ = formatelf::symbols::rename_dynamic_symbols(&mut img, &map);
     }
 
-    if let Ok(bytes) = formatelf::layout::finalize(&mut img, base, None, false, false) {
+    let mut bytes = Vec::new();
+    if formatelf::layout::finalize(&mut img, base, None, false, false, &mut bytes).is_ok() {
         // Whatever we emit must round-trip and hold our invariants.
         let out = formatelf::parser::parse(&bytes).expect("our output must re-parse");
         let _ = formatelf::verify::run(&out);

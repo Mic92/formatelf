@@ -20,7 +20,7 @@ fn run<S: Strategy>(cases: u32, s: S, f: impl Fn(S::Value) -> Result<(), TestCas
 fn exercise(data: &[u8]) {
     if let Ok(mut img) = formatelf::parser::parse(data) {
         let _ = formatelf::verify::run(&img);
-        let _ = formatelf::layout::finalize(&mut img, data, None, false, false);
+        let _ = formatelf::layout::finalize(&mut img, data, None, false, false, &mut Vec::new());
     }
 }
 

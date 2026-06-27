@@ -77,18 +77,21 @@ fn run(args: cli::Args) -> error::Result<()> {
             println!("{line}");
         }
         if mutating {
-            let bytes = formatelf::layout::finalize(
+            let dest = args.output.as_ref().unwrap_or(file);
+            let io = |source| Error::Io {
+                path: dest.clone(),
+                source,
+            };
+            let mut out = std::io::BufWriter::new(std::fs::File::create(dest).map_err(io)?);
+            formatelf::layout::finalize(
                 &mut image,
                 &data,
                 args.page_size,
                 args.debug,
                 args.no_clobber_old_sections,
+                &mut out,
             )?;
-            let dest = args.output.as_ref().unwrap_or(file);
-            std::fs::write(dest, bytes).map_err(|source| Error::Io {
-                path: dest.clone(),
-                source,
-            })?;
+            std::io::Write::flush(&mut out).map_err(io)?;
         }
     }
     Ok(())

@@ -6,6 +6,7 @@
 //! stays zero. Overlapping spans signal an inconsistent layout and are rejected.
 
 use std::borrow::Cow;
+use std::io::Write;
 
 use crate::codec;
 use crate::error::{Error, Result};
@@ -70,15 +71,32 @@ fn owned_spans<'a>(image: &'a ElfImage<'_>, original: &[u8]) -> Result<Vec<Span<
     Ok(spans)
 }
 
-pub fn write(image: &ElfImage<'_>, original: &[u8], total: u64) -> Result<Vec<u8>> {
+/// Stream the output front to back: changed spans at their offsets, original
+/// bytes (or zero past the input end) in between. No seeking required.
+pub fn write_to(
+    image: &ElfImage<'_>,
+    original: &[u8],
+    total: u64,
+    out: &mut dyn Write,
+) -> Result<()> {
     let mut spans = owned_spans(image, original)?;
     spans.sort_by_key(|s| s.at);
 
     let orig_len = original.len() as u64;
-    let mut buf = vec![0u8; total as usize];
-    let copy = |buf: &mut [u8], at: u64, len: u64, src: u64| {
-        let (at, len, src) = (at as usize, len as usize, src as usize);
-        buf[at..at + len].copy_from_slice(&original[src..src + len]);
+    let io = |r: std::io::Result<()>| r.map_err(|e| Error::Serialize(e.to_string()));
+    // Emit `[at, at+len)` from the original, zero-filling past the input end.
+    let fill = |out: &mut dyn Write, at: u64, len: u64| -> Result<()> {
+        let start = at.min(orig_len);
+        let avail = (orig_len - start).min(len);
+        io(out.write_all(&original[start as usize..(start + avail) as usize]))?;
+        let mut pad = len - avail;
+        let zeros = [0u8; 4096];
+        while pad > 0 {
+            let n = pad.min(zeros.len() as u64);
+            io(out.write_all(&zeros[..n as usize]))?;
+            pad -= n;
+        }
+        Ok(())
     };
 
     let mut cur = 0u64;
@@ -96,18 +114,21 @@ pub fn write(image: &ElfImage<'_>, original: &[u8], total: u64) -> Result<Vec<u8
                 s.at
             )));
         }
-        // Fill the preceding gap with the original bytes that live there.
-        let gap_end = s.at.min(orig_len);
-        if gap_end > cur {
-            copy(&mut buf, cur, gap_end - cur, cur);
+        if s.at > cur {
+            fill(out, cur, s.at - cur)?;
         }
-        buf[s.at as usize..s.at as usize + s.bytes.len()].copy_from_slice(&s.bytes);
+        io(out.write_all(&s.bytes))?;
         cur = s.at + len;
     }
-    // Trailing original bytes (e.g. an in-place rewrite shorter than the file).
-    let tail_end = total.min(orig_len);
-    if tail_end > cur {
-        copy(&mut buf, cur, tail_end - cur, cur);
+    if total > cur {
+        fill(out, cur, total - cur)?;
     }
+    Ok(())
+}
+
+/// Collect the streamed output into a buffer.
+pub fn write(image: &ElfImage<'_>, original: &[u8], total: u64) -> Result<Vec<u8>> {
+    let mut buf = Vec::with_capacity(total as usize);
+    write_to(image, original, total, &mut buf)?;
     Ok(buf)
 }

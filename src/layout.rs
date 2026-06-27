@@ -78,7 +78,8 @@ pub fn finalize(
     page_size: Option<u64>,
     debug: bool,
     no_clobber: bool,
-) -> Result<Vec<u8>> {
+    out: &mut dyn std::io::Write,
+) -> Result<()> {
     let grown = grown_sections(image);
     // A pushed program header (e.g. a new PT_GNU_STACK) does not grow any
     // section but still needs the PHT relocated to make room.
@@ -94,7 +95,7 @@ pub fn finalize(
         sync_dynamic(image)?;
         verify::run(image)?;
         let total = original.len() as u64;
-        return serialize::write(image, original, total);
+        return serialize::write_to(image, original, total, out);
     }
     if debug {
         eprintln!("formatelf: {} section(s) grew; relaying out", grown.len());
@@ -105,7 +106,7 @@ pub fn finalize(
             "unsupported ELF type for relayout".into(),
         ));
     }
-    relayout(image, original, grown, page_size, reclaim)
+    relayout(image, original, grown, page_size, reclaim, out)
 }
 
 fn page_size_for(image: &ElfImage<'_>, forced: Option<u64>) -> u64 {
@@ -129,7 +130,8 @@ fn relayout(
     grown: Vec<usize>,
     page_size: Option<u64>,
     reclaim: bool,
-) -> Result<Vec<u8>> {
+    out: &mut dyn std::io::Write,
+) -> Result<()> {
     let sec_align = codec::dyn_size(image.enc.class) as u64; // sizeof(Elf_Off)
     let phdr_size = codec::phdr_size(image.enc.class) as u64;
     let shdr_size = codec::shdr_size(image.enc.class) as u64;
@@ -279,7 +281,7 @@ fn relayout(
     sync_dynamic(image)?;
 
     verify::run(image)?;
-    serialize::write(image, original, total)
+    serialize::write_to(image, original, total, out)
 }
 
 /// True if any fixed-stride record in `sec` has its `width`-byte field at
