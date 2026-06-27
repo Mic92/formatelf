@@ -23,6 +23,11 @@ tempfile = "3"
 
 [dev-dependencies]
 proptest = { version = "1", default-features = false, features = ["std"] }
+divan = "0.1"
+
+[[bench]]
+name = "set_rpath"
+harness = false
 
 [profile.release]
 panic = "abort"
