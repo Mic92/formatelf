@@ -32,14 +32,14 @@ fn round_up(v: u64, align: u64) -> u64 {
     }
 }
 
-fn dyn_idx(image: &ElfImage) -> Option<usize> {
+fn dyn_idx(image: &ElfImage<'_>) -> Option<usize> {
     image.shdrs.iter().position(|s| s.sh_type == sht::DYNAMIC)
 }
 
 /// Final on-disk size of a section. The `.dynamic` section is driven by the
 /// `dynamic` array (re-encoded later by `sync_dynamic`); shrinking it keeps the
 /// original size with a zeroed tail, so only genuine growth counts here.
-fn section_len(image: &ElfImage, i: usize) -> u64 {
+fn section_len(image: &ElfImage<'_>, i: usize) -> u64 {
     if Some(i) == dyn_idx(image) {
         let encoded = image.dynamic.len() as u64 * codec::dyn_size(image.enc.class) as u64;
         encoded.max(image.shdrs[i].size)
@@ -51,7 +51,7 @@ fn section_len(image: &ElfImage, i: usize) -> u64 {
 /// Re-encode the dynamic array into its section data, zero-padding to the
 /// header size so a shrunk array's trailing DT_NULL still terminates. Called
 /// once, after address fixups, so it captures the final entry values.
-fn sync_dynamic(image: &mut ElfImage) -> Result<()> {
+fn sync_dynamic(image: &mut ElfImage<'_>) -> Result<()> {
     let Some(idx) = dyn_idx(image) else {
         return Ok(());
     };
@@ -60,11 +60,11 @@ fn sync_dynamic(image: &mut ElfImage) -> Result<()> {
         codec::write_dyn(image.enc, d, &mut bytes)?;
     }
     bytes.resize((image.shdrs[idx].size as usize).max(bytes.len()), 0);
-    image.section_data[idx] = bytes;
+    image.section_data[idx] = std::borrow::Cow::Owned(bytes);
     Ok(())
 }
 
-fn grown_sections(image: &ElfImage) -> Vec<usize> {
+fn grown_sections(image: &ElfImage<'_>) -> Vec<usize> {
     (0..image.shdrs.len())
         .filter(|&i| {
             image.shdrs[i].sh_type != sht::NOBITS && section_len(image, i) != image.shdrs[i].size
@@ -73,7 +73,7 @@ fn grown_sections(image: &ElfImage) -> Vec<usize> {
 }
 
 pub fn finalize(
-    image: &mut ElfImage,
+    image: &mut ElfImage<'_>,
     original: &[u8],
     page_size: Option<u64>,
     debug: bool,
@@ -108,7 +108,7 @@ pub fn finalize(
     relayout(image, original, grown, page_size, reclaim)
 }
 
-fn page_size_for(image: &ElfImage, forced: Option<u64>) -> u64 {
+fn page_size_for(image: &ElfImage<'_>, forced: Option<u64>) -> u64 {
     if let Some(p) = forced {
         return p;
     }
@@ -124,7 +124,7 @@ fn page_size_for(image: &ElfImage, forced: Option<u64>) -> u64 {
 }
 
 fn relayout(
-    image: &mut ElfImage,
+    image: &mut ElfImage<'_>,
     original: &[u8],
     grown: Vec<usize>,
     page_size: Option<u64>,
@@ -285,7 +285,7 @@ fn relayout(
 /// True if any fixed-stride record in `sec` has its `width`-byte field at
 /// offset `fo` satisfying `pred`.
 fn any_field(
-    image: &ElfImage,
+    image: &ElfImage<'_>,
     sec: usize,
     stride: usize,
     fo: usize,
@@ -304,7 +304,7 @@ fn any_field(
 
 /// Error if any relocation target (r_offset) or symbol value (st_value) lands
 /// inside one of the address ranges about to be relocated.
-fn assert_no_address_refs(image: &ElfImage, ranges: &[(u64, u64)]) -> Result<()> {
+fn assert_no_address_refs(image: &ElfImage<'_>, ranges: &[(u64, u64)]) -> Result<()> {
     if ranges.is_empty() {
         return Ok(());
     }
@@ -340,7 +340,7 @@ fn assert_no_address_refs(image: &ElfImage, ranges: &[(u64, u64)]) -> Result<()>
 
 /// Re-point PT_PHDR/PT_DYNAMIC/PT_INTERP and the ld-cache PT_NOTE at their
 /// (possibly moved) targets.
-fn sync_segments(image: &mut ElfImage, ldcache_phdr: Option<usize>) {
+fn sync_segments(image: &mut ElfImage<'_>, ldcache_phdr: Option<usize>) {
     let phoff = image.ehdr.phoff;
     let pht_bytes = image.phdrs.len() as u64 * codec::phdr_size(image.enc.class) as u64;
     // PT_PHDR's vaddr maps the relocated table; it sits at the region start,
@@ -397,7 +397,7 @@ fn set_segment(p: &mut Phdr, off: u64, addr: u64, size: u64) {
 /// init/fini and array pointers: anything the loader treats as an address. By
 /// keying on the old address range rather than a section name, every moved
 /// section is handled, not just the few an operation is known to touch.
-fn fixup_dynamic_addrs(image: &mut ElfImage, moves: &[MovedSection]) {
+fn fixup_dynamic_addrs(image: &mut ElfImage<'_>, moves: &[MovedSection]) {
     const ADDR_TAGS: &[i64] = &[
         dt::HASH,
         dt::PLTGOT,
@@ -443,7 +443,7 @@ fn fixup_dynamic_addrs(image: &mut ElfImage, moves: &[MovedSection]) {
 /// DT_MIPS_RLD_MAP_REL holds the offset from the tag's own in-memory address to
 /// the .rld_map debug pointer, so it must be recomputed whenever .dynamic or
 /// .rld_map moves. Absent .rld_map, mirror patchelf and store 0.
-fn fixup_mips_rld_map_rel(image: &mut ElfImage) {
+fn fixup_mips_rld_map_rel(image: &mut ElfImage<'_>) {
     if !image.dynamic.iter().any(|d| d.tag == dt::MIPS_RLD_MAP_REL) {
         return;
     }

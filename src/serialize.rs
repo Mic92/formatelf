@@ -21,7 +21,7 @@ struct Span<'a> {
 /// must already have assigned every offset and synced section sizes. A region
 /// that already matches the input is dropped: the gap copy reproduces it, so
 /// the resulting spans are exactly the file's delta from the original.
-fn owned_spans<'a>(image: &'a ElfImage, original: &[u8]) -> Result<Vec<Span<'a>>> {
+fn owned_spans<'a>(image: &'a ElfImage<'_>, original: &[u8]) -> Result<Vec<Span<'a>>> {
     let enc = image.enc;
     let mut spans = Vec::new();
     let mut push = |at: u64, bytes: Cow<'a, [u8]>| {
@@ -65,12 +65,12 @@ fn owned_spans<'a>(image: &'a ElfImage, original: &[u8]) -> Result<Vec<Span<'a>>
                 s.size
             )));
         }
-        push(s.offset, Cow::Borrowed(data.as_slice()));
+        push(s.offset, Cow::Borrowed(data.as_ref()));
     }
     Ok(spans)
 }
 
-pub fn write(image: &ElfImage, original: &[u8], total: u64) -> Result<Vec<u8>> {
+pub fn write(image: &ElfImage<'_>, original: &[u8], total: u64) -> Result<Vec<u8>> {
     let mut spans = owned_spans(image, original)?;
     spans.sort_by_key(|s| s.at);
 

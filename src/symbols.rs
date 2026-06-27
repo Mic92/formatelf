@@ -65,7 +65,13 @@ fn sysv_hash(name: &[u8]) -> u32 {
 }
 
 /// Name of dynamic symbol `i`, read from the (possibly grown) `.dynstr`.
-fn sym_name(image: &ElfImage, dynsym: usize, dynstr: usize, symsize: usize, i: usize) -> Vec<u8> {
+fn sym_name(
+    image: &ElfImage<'_>,
+    dynsym: usize,
+    dynstr: usize,
+    symsize: usize,
+    i: usize,
+) -> Vec<u8> {
     let big = image.enc.endian == Endian::Big;
     let st_name = rd_u32(big, &image.section_data[dynsym], i * symsize);
     let tab = &image.section_data[dynstr];
@@ -73,7 +79,7 @@ fn sym_name(image: &ElfImage, dynsym: usize, dynstr: usize, symsize: usize, i: u
 }
 
 pub fn rename_dynamic_symbols(
-    image: &mut ElfImage,
+    image: &mut ElfImage<'_>,
     remap: &BTreeMap<String, String>,
 ) -> Result<()> {
     let big = image.enc.endian == Endian::Big;
@@ -104,9 +110,11 @@ pub fn rename_dynamic_symbols(
     }
     for (i, new) in &renames {
         let off = image.section_data[dynstr].len() as u32;
-        image.section_data[dynstr].extend_from_slice(new.as_bytes());
-        image.section_data[dynstr].push(0);
-        wr_u32(big, &mut image.section_data[dynsym], i * symsize, off);
+        image.section_data[dynstr]
+            .to_mut()
+            .extend_from_slice(new.as_bytes());
+        image.section_data[dynstr].to_mut().push(0);
+        wr_u32(big, image.section_data[dynsym].to_mut(), i * symsize, off);
     }
 
     rebuild_gnu_hash(image, dynsym, dynstr, symsize, nsyms)?;
@@ -118,7 +126,7 @@ pub fn rename_dynamic_symbols(
 /// structure that referenced them by index, then refill the bloom filter,
 /// buckets and chain.
 fn rebuild_gnu_hash(
-    image: &mut ElfImage,
+    image: &mut ElfImage<'_>,
     dynsym: usize,
     dynstr: usize,
     symsize: usize,
@@ -173,18 +181,18 @@ fn rebuild_gnu_hash(
     }
 
     reorder_records(
-        &mut image.section_data[dynsym],
+        image.section_data[dynsym].to_mut(),
         symndx * symsize,
         symsize,
         &old2new,
     );
     if let Some(ver) = image.find_section(".gnu.version") {
-        reorder_records(&mut image.section_data[ver], symndx * 2, 2, &old2new);
+        reorder_records(image.section_data[ver].to_mut(), symndx * 2, 2, &old2new);
     }
     remap_reloc_symbols(image, symndx, &old2new);
 
     // Refill bloom filter, buckets and chain in the new order.
-    let data = &mut image.section_data[gh];
+    let data = image.section_data[gh].to_mut();
     for b in &mut data[bloom_off..buckets_off] {
         *b = 0;
     }
@@ -216,7 +224,7 @@ fn rebuild_gnu_hash(
 }
 
 fn rebuild_sysv_hash(
-    image: &mut ElfImage,
+    image: &mut ElfImage<'_>,
     dynsym: usize,
     dynstr: usize,
     symsize: usize,
@@ -242,7 +250,7 @@ fn rebuild_sysv_hash(
     let names: Vec<u32> = (first..nsyms)
         .map(|i| sysv_hash(&sym_name(image, dynsym, dynstr, symsize, i)) % num_buckets as u32)
         .collect();
-    let data = &mut image.section_data[hash];
+    let data = image.section_data[hash].to_mut();
     for b in &mut data[buckets_off..buckets_off + (num_buckets + nchain) * 4] {
         *b = 0;
     }
@@ -265,7 +273,7 @@ fn reorder_records(data: &mut [u8], base: usize, stride: usize, old2new: &[usize
 }
 
 /// Rewrite relocation symbol indices after the symbol table was reordered.
-fn remap_reloc_symbols(image: &mut ElfImage, symndx: usize, old2new: &[usize]) {
+fn remap_reloc_symbols(image: &mut ElfImage<'_>, symndx: usize, old2new: &[usize]) {
     let big = image.enc.endian == Endian::Big;
     let elf64 = image.enc.class == Class::Elf64;
     let ptr = if elf64 { 8 } else { 4 };
@@ -285,7 +293,7 @@ fn remap_reloc_symbols(image: &mut ElfImage, symndx: usize, old2new: &[usize]) {
             (sht::REL, false) => 8,
             _ => continue,
         };
-        let data = &mut image.section_data[i];
+        let data = image.section_data[i].to_mut();
         for r in 0..data.len() / stride {
             let o = r * stride + info_off;
             let info = rd_uptr(big, elf64, data, o);

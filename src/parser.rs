@@ -26,7 +26,7 @@ fn table<'a>(data: &'a [u8], off: u64, count: u64, size: u64, what: &str) -> Res
     slice(data, off, len, what)
 }
 
-pub fn parse(data: &[u8]) -> Result<ElfImage> {
+pub fn parse(data: &[u8]) -> Result<ElfImage<'_>> {
     let (mut ehdr, enc, raw_phnum, raw_shnum) = codec::read_ehdr(data)?;
     let (phnum, shnum) = resolve_counts(data, enc, &mut ehdr, raw_phnum, raw_shnum)?;
 
@@ -47,9 +47,11 @@ pub fn parse(data: &[u8]) -> Result<ElfImage> {
     let mut section_data = Vec::with_capacity(shdrs.len());
     for s in &shdrs {
         if s.sh_type == sht::NOBITS {
-            section_data.push(Vec::new());
+            section_data.push(std::borrow::Cow::Borrowed(&[][..]));
         } else {
-            section_data.push(slice(data, s.offset, s.size, "section")?.to_vec());
+            section_data.push(std::borrow::Cow::Borrowed(slice(
+                data, s.offset, s.size, "section",
+            )?));
         }
     }
 

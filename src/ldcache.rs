@@ -9,7 +9,7 @@ use crate::error::{Error, Result};
 use crate::ir::{self, dt, shf, sht, ElfImage};
 use crate::ops::{needed, require_dynamic};
 
-pub fn build(image: &mut ElfImage) -> Result<()> {
+pub fn build(image: &mut ElfImage<'_>) -> Result<()> {
     require_dynamic(image)?;
     let needed = needed(image)?;
     let strtab = image
@@ -71,7 +71,7 @@ pub fn build(image: &mut ElfImage) -> Result<()> {
 
 /// Append a NixOS ld-cache SHT_NOTE section plus a PT_NOTE that points at it;
 /// the layout engine assigns its address and the covering PT_LOAD.
-fn add_note_section(image: &mut ElfImage, desc: &[u8]) -> Result<()> {
+fn add_note_section(image: &mut ElfImage<'_>, desc: &[u8]) -> Result<()> {
     const NT_NIXOS_LD_CACHE: u32 = 0x63a8_6cb6;
     let big = image.enc.endian == ir::Endian::Big;
     let u32b = |v: u32| {
@@ -100,10 +100,10 @@ fn add_note_section(image: &mut ElfImage, desc: &[u8]) -> Result<()> {
     // Re-running must refresh the existing note, not append a duplicate. The
     // layout engine re-anchors the covering PT_NOTE once the section moves.
     if let Some(idx) = image.find_section(".note.nixos.ldcache") {
-        if image.section_data[idx] == note {
+        if image.section_data[idx].as_ref() == note.as_slice() {
             return Ok(()); // already up to date
         }
-        image.section_data[idx] = note;
+        image.section_data[idx] = std::borrow::Cow::Owned(note);
         image.shdrs[idx].size = 0; // force re-placement
         return Ok(());
     }
@@ -113,7 +113,9 @@ fn add_note_section(image: &mut ElfImage, desc: &[u8]) -> Result<()> {
         return Err(Error::Missing("no section header string table".into()));
     }
     let name_off = image.section_data[shstr].len() as u32;
-    image.section_data[shstr].extend_from_slice(b".note.nixos.ldcache\0");
+    image.section_data[shstr]
+        .to_mut()
+        .extend_from_slice(b".note.nixos.ldcache\0");
 
     image.shdrs.push(ir::Shdr {
         name: name_off,
@@ -127,7 +129,7 @@ fn add_note_section(image: &mut ElfImage, desc: &[u8]) -> Result<()> {
         addralign: 4,
         entsize: 0,
     });
-    image.section_data.push(note);
+    image.section_data.push(std::borrow::Cow::Owned(note));
 
     // Placeholder PT_NOTE (filesz 0) resynced onto the note once it is placed.
     image.phdrs.push(ir::Phdr {

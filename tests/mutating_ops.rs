@@ -171,7 +171,8 @@ fn force_rpath_uses_dt_rpath_tag() {
         out(&reference, "--print-rpath", &bin).trim(),
         "/forced/path/longlonglong"
     );
-    let img = formatelf::parser::parse(&std::fs::read(&bin).unwrap()).unwrap();
+    let img_buf = std::fs::read(&bin).unwrap();
+    let img = formatelf::parser::parse(&img_buf).unwrap();
     assert!(
         img.dynamic
             .iter()
@@ -223,7 +224,8 @@ fn no_default_lib_sets_flag() {
     }
     let bin = copy("exe-dyn-le", "nodeflib");
     patch(&bin, &["--no-default-lib"]);
-    let img = formatelf::parser::parse(&std::fs::read(&bin).unwrap()).unwrap();
+    let img_buf = std::fs::read(&bin).unwrap();
+    let img = formatelf::parser::parse(&img_buf).unwrap();
     let flags1 = img
         .dynamic
         .iter()
@@ -305,8 +307,10 @@ fn clear_symbol_version_matches_reference() {
     assert!(r.success());
 
     // The .gnu.version arrays must match byte-for-byte.
-    let a = formatelf::parser::parse(&std::fs::read(&bin_ours).unwrap()).unwrap();
-    let b = formatelf::parser::parse(&std::fs::read(&bin_ref).unwrap()).unwrap();
+    let a_buf = std::fs::read(&bin_ours).unwrap();
+    let a = formatelf::parser::parse(&a_buf).unwrap();
+    let b_buf = std::fs::read(&bin_ref).unwrap();
+    let b = formatelf::parser::parse(&b_buf).unwrap();
     let ai = a.find_section(".gnu.version").unwrap();
     let bi = b.find_section(".gnu.version").unwrap();
     assert_eq!(a.section_data[ai], b.section_data[bi]);
@@ -327,7 +331,8 @@ fn print_needed_works_without_section_headers() {
     let bin = Path::new(env!("CARGO_TARGET_TMPDIR")).join("no-shdr.so");
     std::fs::write(&bin, &data).unwrap();
 
-    let img = formatelf::parser::parse(&std::fs::read(&bin).unwrap()).unwrap();
+    let img_buf = std::fs::read(&bin).unwrap();
+    let img = formatelf::parser::parse(&img_buf).unwrap();
     assert!(img.shdrs.is_empty(), "section headers should be gone");
 
     let out = Command::new(env!("CARGO_BIN_EXE_formatelf"))
@@ -384,7 +389,8 @@ fn repeated_patching_reuses_the_appended_region() {
     let bin = copy("exe-dyn-le", "coalesce");
 
     let load_count = |p: &Path| {
-        let img = formatelf::parser::parse(&std::fs::read(p).unwrap()).unwrap();
+        let img_buf = std::fs::read(p).unwrap();
+        let img = formatelf::parser::parse(&img_buf).unwrap();
         img.phdrs
             .iter()
             .filter(|h| h.p_type == formatelf::ir::pt::LOAD)
@@ -419,7 +425,8 @@ fn rename_dynamic_symbols_matches_reference() {
     let src = sample("exe-dyn-le");
 
     // First dynamic symbol with a plain name, found via our own parser.
-    let img = formatelf::parser::parse(&std::fs::read(&src).unwrap()).unwrap();
+    let img_buf = std::fs::read(&src).unwrap();
+    let img = formatelf::parser::parse(&img_buf).unwrap();
     let dynsym = img.find_section(".dynsym").unwrap();
     let dynstr = img.find_section(".dynstr").unwrap();
     let name = (0..img.section_data[dynsym].len() / 24)
@@ -445,8 +452,10 @@ fn rename_dynamic_symbols_matches_reference() {
         .unwrap()
         .success());
 
-    let a = formatelf::parser::parse(&std::fs::read(&ours).unwrap()).unwrap();
-    let b = formatelf::parser::parse(&std::fs::read(&theirs).unwrap()).unwrap();
+    let a_buf = std::fs::read(&ours).unwrap();
+    let a = formatelf::parser::parse(&a_buf).unwrap();
+    let b_buf = std::fs::read(&theirs).unwrap();
+    let b = formatelf::parser::parse(&b_buf).unwrap();
     for sec in [".dynsym", ".gnu.hash", ".hash", ".gnu.version", ".dynstr"] {
         if let (Some(i), Some(j)) = (a.find_section(sec), b.find_section(sec)) {
             assert_eq!(
@@ -485,8 +494,10 @@ fn build_resolution_cache_matches_reference() {
         .unwrap()
         .success());
 
-    let a = formatelf::parser::parse(&std::fs::read(&ours).unwrap()).unwrap();
-    let b = formatelf::parser::parse(&std::fs::read(&theirs).unwrap()).unwrap();
+    let a_buf = std::fs::read(&ours).unwrap();
+    let a = formatelf::parser::parse(&a_buf).unwrap();
+    let b_buf = std::fs::read(&theirs).unwrap();
+    let b = formatelf::parser::parse(&b_buf).unwrap();
     let ai = a.find_section(".note.nixos.ldcache").expect("note written");
     let bi = b.find_section(".note.nixos.ldcache").unwrap();
     assert_eq!(
@@ -567,11 +578,12 @@ fn adds_gnu_stack_segment_when_absent() {
 }
 
 fn ldcache_note(p: &Path) -> Vec<u8> {
-    let img = formatelf::parser::parse(&std::fs::read(p).unwrap()).unwrap();
+    let img_buf = std::fs::read(p).unwrap();
+    let img = formatelf::parser::parse(&img_buf).unwrap();
     let i = img
         .find_section(".note.nixos.ldcache")
         .expect("ld-cache note written");
-    img.section_data[i].clone()
+    img.section_data[i].to_vec()
 }
 
 /// $ORIGIN (and other token/hwcaps dirs) cannot be resolved at patch time, so
@@ -647,7 +659,8 @@ fn build_resolution_cache_refreshes_in_place() {
     patch(&bin, &["--add-needed", "libfoo.so.1"]);
     patch(&bin, &["--build-resolution-cache"]);
 
-    let img = formatelf::parser::parse(&std::fs::read(&bin).unwrap()).unwrap();
+    let img_buf = std::fs::read(&bin).unwrap();
+    let img = formatelf::parser::parse(&img_buf).unwrap();
     let notes: Vec<usize> = (0..img.shdrs.len())
         .filter(|&i| img.section_name(i) == Some(".note.nixos.ldcache"))
         .collect();
@@ -666,7 +679,8 @@ fn build_resolution_cache_refreshes_in_place() {
 /// emitted binary regardless of how .dynamic was rewritten.
 fn assert_rld_map_rel_valid(bin: &Path) {
     use formatelf::ir::{dt, sht, Class};
-    let img = formatelf::parser::parse(&std::fs::read(bin).unwrap()).unwrap();
+    let img_buf = std::fs::read(bin).unwrap();
+    let img = formatelf::parser::parse(&img_buf).unwrap();
     let sec_addr = |i: usize| img.shdrs[i].addr;
     let dyn_addr = sec_addr(
         img.shdrs
@@ -703,7 +717,8 @@ fn mips_relayout_fixes_arch_specific_fields() {
     patch(&bin, &["--add-needed", "libextra.so.1"]);
     assert_rld_map_rel_valid(&bin);
 
-    let img = formatelf::parser::parse(&std::fs::read(&bin).unwrap()).unwrap();
+    let img_buf = std::fs::read(&bin).unwrap();
+    let img = formatelf::parser::parse(&img_buf).unwrap();
     let af = img.find_section(".MIPS.abiflags").unwrap();
     let seg = img
         .phdrs

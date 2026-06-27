@@ -200,13 +200,13 @@ pub mod dt {
 /// Section contents owned separately so ops can grow them without fighting
 /// on-disk offsets; the layout engine assigns final offsets later.
 #[derive(Debug, Clone)]
-pub struct ElfImage {
+pub struct ElfImage<'a> {
     pub enc: Encoding,
     pub ehdr: Ehdr,
     pub phdrs: Vec<Phdr>,
     pub shdrs: Vec<Shdr>,
-    /// Parallel to `shdrs`.
-    pub section_data: Vec<Vec<u8>>,
+    /// Parallel to `shdrs`. Borrows the parsed input; ops clone on write.
+    pub section_data: Vec<std::borrow::Cow<'a, [u8]>>,
     pub dynamic: Vec<DynEntry>,
     /// Dyn-string-table bytes recovered from PT_DYNAMIC/PT_LOAD when there is no
     /// `.dynstr` section (stripped section headers). Read-only fallback; the
@@ -224,7 +224,7 @@ pub fn cstr(tab: &[u8], off: u32) -> Option<&str> {
     std::str::from_utf8(&tab[..end]).ok()
 }
 
-impl ElfImage {
+impl ElfImage<'_> {
     pub fn section_name(&self, idx: usize) -> Option<&str> {
         let strtab = self.section_data.get(self.ehdr.shstrndx as usize)?;
         cstr(strtab, self.shdrs.get(idx)?.name)
@@ -250,7 +250,7 @@ impl ElfImage {
                 .get(link)
                 .is_some_and(|s| s.sh_type == sht::STRTAB)
             {
-                return self.section_data.get(link).map(Vec::as_slice);
+                return self.section_data.get(link).map(|c| c.as_ref());
             }
         }
         self.dynstr_fallback.as_deref()

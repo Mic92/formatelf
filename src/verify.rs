@@ -8,7 +8,7 @@ fn fail(msg: impl Into<String>) -> Error {
     Error::Constraint(msg.into())
 }
 
-pub fn run(image: &ElfImage) -> Result<()> {
+pub fn run(image: &ElfImage<'_>) -> Result<()> {
     let loads: Vec<_> = image
         .phdrs
         .iter()
@@ -60,7 +60,7 @@ pub fn run(image: &ElfImage) -> Result<()> {
 /// load bias from PT_PHDR.p_vaddr, so for ET_DYN the table must satisfy
 /// PT_PHDR.p_vaddr == base_vaddr + e_phoff (base = the offset-0 PT_LOAD).
 /// Getting this wrong loads fine on lenient x86_64 glibc but aborts elsewhere.
-fn phdr_anchor(image: &ElfImage, loads: &[&Phdr]) -> Result<()> {
+fn phdr_anchor(image: &ElfImage<'_>, loads: &[&Phdr]) -> Result<()> {
     let Some(phdr) = image.phdrs.iter().find(|p| p.p_type == pt::PHDR) else {
         return Ok(());
     };
@@ -83,7 +83,7 @@ fn phdr_anchor(image: &ElfImage, loads: &[&Phdr]) -> Result<()> {
 /// Cross-check the dynamic array against the sections and segments it must
 /// agree with. These caught a real bug where DT_STRTAB kept pointing at the
 /// pre-relayout .dynstr address.
-fn dynamic_consistency(image: &ElfImage) -> Result<()> {
+fn dynamic_consistency(image: &ElfImage<'_>) -> Result<()> {
     let dval = |tag: i64| image.dynamic.iter().find(|d| d.tag == tag).map(|d| d.val);
 
     if let Some(i) = image.find_section(".dynstr") {

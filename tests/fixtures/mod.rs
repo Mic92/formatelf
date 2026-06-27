@@ -90,7 +90,8 @@ pub fn guard() -> Option<PathBuf> {
 /// header, so after a relayout DT_STRTAB must point at the relocated .dynstr.
 pub fn assert_dynstr_synced(file: &Path) {
     use formatelf::ir::dt;
-    let img = formatelf::parser::parse(&std::fs::read(file).unwrap()).unwrap();
+    let buf = std::fs::read(file).unwrap();
+    let img = formatelf::parser::parse(&buf).unwrap();
     let strtab = img
         .dynamic
         .iter()

@@ -30,7 +30,7 @@ pub struct Modifiers {
 }
 
 pub fn apply(
-    image: &mut ElfImage,
+    image: &mut ElfImage<'_>,
     op: &Operation,
     mods: &Modifiers,
     report: &mut Report,
@@ -124,24 +124,24 @@ pub(crate) fn dynstr_set(buf: &mut Vec<u8>, reuse: Option<usize>, s: &str) -> u6
     dynstr_append(buf, s)
 }
 
-pub(crate) fn dynstr_section(image: &ElfImage) -> Result<usize> {
+pub(crate) fn dynstr_section(image: &ElfImage<'_>) -> Result<usize> {
     image
         .find_section(".dynstr")
         .ok_or_else(|| Error::Missing("cannot find section .dynstr".into()))
 }
 
-fn set_interpreter(image: &mut ElfImage, new: &str) -> Result<()> {
+fn set_interpreter(image: &mut ElfImage<'_>, new: &str) -> Result<()> {
     let idx = image
         .find_section(".interp")
         .ok_or_else(|| Error::Missing("cannot find section .interp".into()))?;
     let mut bytes = new.as_bytes().to_vec();
     bytes.push(0);
-    image.section_data[idx] = bytes;
+    image.section_data[idx] = std::borrow::Cow::Owned(bytes);
     Ok(())
 }
 
 /// Only meaningful for shared objects; a no-op on executables, matching patchelf.
-fn set_soname(image: &mut ElfImage, name: &str) -> Result<()> {
+fn set_soname(image: &mut ElfImage<'_>, name: &str) -> Result<()> {
     if image.ehdr.e_type != ir::et::DYN {
         return Ok(());
     }
@@ -149,7 +149,7 @@ fn set_soname(image: &mut ElfImage, name: &str) -> Result<()> {
     let dynstr_idx = dynstr_section(image)?;
     let existing = image.dynamic.iter().position(|d| d.tag == dt::SONAME);
     let reuse = existing.map(|i| image.dynamic[i].val as usize);
-    let off = dynstr_set(&mut image.section_data[dynstr_idx], reuse, name);
+    let off = dynstr_set(image.section_data[dynstr_idx].to_mut(), reuse, name);
     match existing {
         Some(i) => image.dynamic[i].val = off,
         None => image.dynamic.insert(
@@ -163,10 +163,10 @@ fn set_soname(image: &mut ElfImage, name: &str) -> Result<()> {
     Ok(())
 }
 
-fn add_needed(image: &mut ElfImage, lib: &str) -> Result<()> {
+fn add_needed(image: &mut ElfImage<'_>, lib: &str) -> Result<()> {
     require_dynamic(image)?;
     let dynstr_idx = dynstr_section(image)?;
-    let off = dynstr_append(&mut image.section_data[dynstr_idx], lib);
+    let off = dynstr_append(image.section_data[dynstr_idx].to_mut(), lib);
     image.dynamic.insert(
         0,
         ir::DynEntry {
@@ -177,7 +177,7 @@ fn add_needed(image: &mut ElfImage, lib: &str) -> Result<()> {
     Ok(())
 }
 
-fn remove_needed(image: &mut ElfImage, lib: &str) -> Result<()> {
+fn remove_needed(image: &mut ElfImage<'_>, lib: &str) -> Result<()> {
     require_dynamic(image)?;
     let dynstr_idx = dynstr_section(image)?;
     let targets: Vec<u64> = image
@@ -193,7 +193,7 @@ fn remove_needed(image: &mut ElfImage, lib: &str) -> Result<()> {
     Ok(())
 }
 
-fn replace_needed(image: &mut ElfImage, old: &str, new: &str) -> Result<()> {
+fn replace_needed(image: &mut ElfImage<'_>, old: &str, new: &str) -> Result<()> {
     require_dynamic(image)?;
     let dynstr_idx = dynstr_section(image)?;
     let matches: Vec<usize> = image
@@ -207,7 +207,7 @@ fn replace_needed(image: &mut ElfImage, old: &str, new: &str) -> Result<()> {
     if matches.is_empty() {
         return Ok(());
     }
-    let off = dynstr_append(&mut image.section_data[dynstr_idx], new);
+    let off = dynstr_append(image.section_data[dynstr_idx].to_mut(), new);
     for i in matches {
         image.dynamic[i].val = off;
     }
@@ -216,7 +216,7 @@ fn replace_needed(image: &mut ElfImage, old: &str, new: &str) -> Result<()> {
 
 /// Set the `.gnu.version` entry to 1 (VER_NDX_GLOBAL) for every dynamic symbol
 /// named `sym`. In-place: the versym array keeps its size.
-fn clear_symbol_version(image: &mut ElfImage, sym: &str) -> Result<()> {
+fn clear_symbol_version(image: &mut ElfImage<'_>, sym: &str) -> Result<()> {
     let dynsym = image
         .find_section(".dynsym")
         .ok_or_else(|| Error::Missing("cannot find section .dynsym".into()))?;
@@ -241,17 +241,17 @@ fn clear_symbol_version(image: &mut ElfImage, sym: &str) -> Result<()> {
     for i in 0..count {
         let st_name = e.read_u32(&image.section_data[dynsym], i * sym_size);
         if ir::cstr(&image.section_data[dynstr], st_name) == Some(sym) {
-            e.write_u16(&mut image.section_data[versym], i * 2, VER_NDX_GLOBAL);
+            e.write_u16(image.section_data[versym].to_mut(), i * 2, VER_NDX_GLOBAL);
         }
     }
     Ok(())
 }
 
-fn dyn_insert_front(image: &mut ElfImage, tag: i64, val: u64) {
+fn dyn_insert_front(image: &mut ElfImage<'_>, tag: i64, val: u64) {
     image.dynamic.insert(0, ir::DynEntry { tag, val });
 }
 
-fn no_default_lib(image: &mut ElfImage) -> Result<()> {
+fn no_default_lib(image: &mut ElfImage<'_>) -> Result<()> {
     require_dynamic(image)?;
     match image.dynamic.iter_mut().find(|d| d.tag == dt::FLAGS_1) {
         Some(d) => d.val |= ir::df1::NODEFLIB,
@@ -260,7 +260,7 @@ fn no_default_lib(image: &mut ElfImage) -> Result<()> {
     Ok(())
 }
 
-fn add_debug_tag(image: &mut ElfImage) -> Result<()> {
+fn add_debug_tag(image: &mut ElfImage<'_>) -> Result<()> {
     require_dynamic(image)?;
     if !image.dynamic.iter().any(|d| d.tag == dt::DEBUG) {
         dyn_insert_front(image, dt::DEBUG, 0);
@@ -268,7 +268,7 @@ fn add_debug_tag(image: &mut ElfImage) -> Result<()> {
     Ok(())
 }
 
-fn set_os_abi(image: &mut ElfImage, name: &str) -> Result<()> {
+fn set_os_abi(image: &mut ElfImage<'_>, name: &str) -> Result<()> {
     let abi = abi_code(name).ok_or_else(|| Error::Cli("unrecognized OS ABI".into()))?;
     image.ehdr.ident[7] = abi; // EI_OSABI; written verbatim by the codec
     image.ehdr.os_abi = abi;
@@ -298,7 +298,7 @@ fn abi_code(name: &str) -> Option<u8> {
 /// PT_NULL slot if there is one, else append a new entry (the layout engine
 /// relocates the program header table to make room). PT_GNU_STACK carries no
 /// file content, so a fresh entry needs no offset/address assignment.
-fn modify_execstack(image: &mut ElfImage, set: bool) -> Result<()> {
+fn modify_execstack(image: &mut ElfImage<'_>, set: bool) -> Result<()> {
     if let Some(p) = image
         .phdrs
         .iter_mut()
@@ -324,7 +324,7 @@ fn modify_execstack(image: &mut ElfImage, set: bool) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn require_dynamic(image: &ElfImage) -> Result<()> {
+pub(crate) fn require_dynamic(image: &ElfImage<'_>) -> Result<()> {
     if image.has_dynamic() {
         Ok(())
     } else {
@@ -332,7 +332,7 @@ pub(crate) fn require_dynamic(image: &ElfImage) -> Result<()> {
     }
 }
 
-fn interpreter(image: &ElfImage) -> Result<String> {
+fn interpreter(image: &ElfImage<'_>) -> Result<String> {
     let bytes = match image.find_section(".interp") {
         Some(idx) => &image.section_data[idx],
         // Stripped section headers: fall back to PT_INTERP.
@@ -345,20 +345,20 @@ fn interpreter(image: &ElfImage) -> Result<String> {
 }
 
 /// Value of the first `tag` dynamic entry resolved against `.dynstr`.
-fn dyn_string(image: &ElfImage, tag: i64) -> Option<String> {
+fn dyn_string(image: &ElfImage<'_>, tag: i64) -> Option<String> {
     let strtab = image.dynstr()?;
     let entry = image.dynamic.iter().find(|d| d.tag == tag)?;
     ir::cstr(strtab, entry.val as u32).map(str::to_owned)
 }
 
-fn soname(image: &ElfImage) -> Option<String> {
+fn soname(image: &ElfImage<'_>) -> Option<String> {
     if image.ehdr.e_type != ir::et::DYN {
         return None;
     }
     dyn_string(image, dt::SONAME).filter(|s| !s.is_empty())
 }
 
-pub(crate) fn needed(image: &ElfImage) -> Result<Vec<String>> {
+pub(crate) fn needed(image: &ElfImage<'_>) -> Result<Vec<String>> {
     require_dynamic(image)?;
     let Some(strtab) = image.dynstr() else {
         return Ok(Vec::new());
@@ -381,7 +381,7 @@ fn with_execstack(flags: u32, set: bool) -> u32 {
     }
 }
 
-fn execstack(image: &ElfImage) -> char {
+fn execstack(image: &ElfImage<'_>) -> char {
     execstack_char(&image.phdrs)
 }
 
