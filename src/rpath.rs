@@ -8,6 +8,9 @@ use crate::ir::{self, ElfImage, dt};
 use crate::ops::{Modifiers, dynstr_section, dynstr_set, needed, require_dynamic};
 
 /// `DT_RUNPATH` takes precedence over the obsolete `DT_RPATH`.
+///
+/// # Errors
+/// Returns an error if the dynamic string table cannot be read.
 pub fn read(image: &ElfImage<'_>) -> Result<String> {
     require_dynamic(image)?;
     let Some(strtab) = image.dynstr() else {
@@ -33,7 +36,7 @@ pub fn remove(image: &mut ElfImage<'_>) {
 }
 
 /// Append `path` to the current rpath (colon-joined), then set it.
-pub fn add(image: &mut ElfImage<'_>, path: &str, force: bool) -> Result<()> {
+pub(crate) fn add(image: &mut ElfImage<'_>, path: &str, force: bool) -> Result<()> {
     let cur = read(image)?;
     let combined = if cur.is_empty() {
         path.to_string()
@@ -46,7 +49,7 @@ pub fn add(image: &mut ElfImage<'_>, path: &str, force: bool) -> Result<()> {
 /// Drop rpath directories that contain none of the needed libraries (matching
 /// the binary's machine type), and any rejected by --allowed-rpath-prefixes.
 /// Non-absolute entries such as $ORIGIN are always kept.
-pub fn shrink(image: &mut ElfImage<'_>, mods: &Modifiers) -> Result<()> {
+pub(crate) fn shrink(image: &mut ElfImage<'_>, mods: &Modifiers) -> Result<()> {
     let cur = read(image)?;
     if cur.is_empty() {
         return Ok(());
@@ -105,7 +108,7 @@ fn elf_machine(path: &Path) -> Option<u16> {
 /// Set `DT_RUNPATH` (or `DT_RPATH` when `force`). Reuses the existing string slot
 /// when the new value fits, otherwise appends to .dynstr; adds the dynamic
 /// entry when absent. Growth is resolved later by the layout engine.
-pub fn set(image: &mut ElfImage<'_>, new: &str, force: bool) -> Result<()> {
+pub(crate) fn set(image: &mut ElfImage<'_>, new: &str, force: bool) -> Result<()> {
     require_dynamic(image)?;
     let dynstr_idx = dynstr_section(image)?;
 

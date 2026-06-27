@@ -26,6 +26,8 @@ fn table<'a>(data: &'a [u8], off: u64, count: u64, size: u64, what: &str) -> Res
     slice(data, off, len, what)
 }
 
+/// # Errors
+/// Returns an error if `data` is not a well-formed ELF object.
 pub fn parse(data: &[u8]) -> Result<ElfImage<'_>> {
     let (mut ehdr, enc, raw_phnum, raw_shnum) = codec::read_ehdr(data)?;
     let (phnum, shnum) = resolve_counts(data, enc, &mut ehdr, raw_phnum, raw_shnum)?;

@@ -9,7 +9,7 @@ use crate::error::{Error, Result};
 use crate::ir::{self, ElfImage, dt, shf, sht};
 use crate::ops::{needed, require_dynamic};
 
-pub fn build(image: &mut ElfImage<'_>) -> Result<()> {
+pub(crate) fn build(image: &mut ElfImage<'_>) -> Result<()> {
     require_dynamic(image)?;
     let needed = needed(image)?;
     let strtab = image

@@ -72,6 +72,9 @@ fn grown_sections(image: &ElfImage<'_>) -> Vec<usize> {
         .collect()
 }
 
+/// # Errors
+/// Returns an error for an ELF type that cannot be relaid out, or propagates a
+/// verification or serialization failure.
 pub fn finalize(
     image: &mut ElfImage<'_>,
     original: &[u8],

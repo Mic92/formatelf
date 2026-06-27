@@ -29,6 +29,9 @@ pub struct Modifiers {
     pub debug: bool,
 }
 
+/// # Errors
+/// Returns an error if the operation cannot be applied, e.g. a required section
+/// or dynamic tag is missing or the input is malformed.
 pub fn apply(
     image: &mut ElfImage<'_>,
     op: &Operation,

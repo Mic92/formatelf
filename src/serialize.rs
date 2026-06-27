@@ -88,7 +88,7 @@ fn borrowed_offset(slice: &[u8], original: &[u8]) -> Option<u64> {
 
 /// Stream the output front to back: changed spans at their offsets, original
 /// bytes (or zero past the input end) in between. No seeking required.
-pub fn write_to(
+pub(crate) fn write_to(
     image: &ElfImage<'_>,
     original: &[u8],
     total: u64,
@@ -142,6 +142,9 @@ pub fn write_to(
 }
 
 /// Collect the streamed output into a buffer.
+///
+/// # Errors
+/// Propagates any serialization error from [`write_to`].
 pub fn write(image: &ElfImage<'_>, original: &[u8], total: u64) -> Result<Vec<u8>> {
     let mut buf = Vec::with_capacity(total as usize);
     write_to(image, original, total, &mut buf)?;

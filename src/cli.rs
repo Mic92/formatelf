@@ -84,6 +84,8 @@ pub enum Parsed {
     Version,
 }
 
+/// # Errors
+/// Returns an error on an unknown flag or a missing or malformed argument.
 pub fn parse<I>(raw: I) -> Result<Parsed>
 where
     I: IntoIterator<Item = std::ffi::OsString>,

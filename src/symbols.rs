@@ -77,7 +77,7 @@ fn sym_name<'a>(
     &rest[..end]
 }
 
-pub fn rename_dynamic_symbols(
+pub(crate) fn rename_dynamic_symbols(
     image: &mut ElfImage<'_>,
     remap: &BTreeMap<String, String>,
 ) -> Result<()> {

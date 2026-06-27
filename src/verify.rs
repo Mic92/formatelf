@@ -8,6 +8,9 @@ fn fail(msg: impl Into<String>) -> Error {
     Error::Constraint(msg.into())
 }
 
+/// # Errors
+/// Returns an error if the image violates a structural invariant the loader
+/// relies on.
 pub fn run(image: &ElfImage<'_>) -> Result<()> {
     let loads: Vec<_> = image
         .phdrs

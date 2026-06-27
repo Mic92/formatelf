@@ -46,7 +46,7 @@ fn narrow(v: u64, field: &str) -> Result<u32> {
 /// Returns the decoded header, its encoding, and the raw `(e_phnum, e_shnum)`
 /// table counts (needed by the parser; not stored in the IR since the
 /// serializer derives them from vector lengths).
-pub fn read_ehdr(data: &[u8]) -> Result<(Ehdr, Encoding, u16, u16)> {
+pub(crate) fn read_ehdr(data: &[u8]) -> Result<(Ehdr, Encoding, u16, u16)> {
     if data.len() < 16 || &data[..4] != b"\x7fELF" {
         return Err(Error::Parse("bad ELF magic".into()));
     }
@@ -138,6 +138,8 @@ fn ehdr_counts(h: &Ehdr, phnum: usize, shnum: usize) -> (u16, u16, u16) {
     (e_phnum, e_shnum, e_shstrndx)
 }
 
+/// # Errors
+/// Returns an error if a 64-bit field does not fit its narrower ELF32 field.
 pub fn write_ehdr(
     enc: Encoding,
     h: &Ehdr,
@@ -194,7 +196,7 @@ pub fn write_ehdr(
     Ok(())
 }
 
-pub fn read_phdr(enc: Encoding, data: &[u8]) -> Result<Phdr> {
+pub(crate) fn read_phdr(enc: Encoding, data: &[u8]) -> Result<Phdr> {
     let e = endianness(enc.endian);
     match enc.class {
         Class::Elf64 => {
@@ -226,6 +228,8 @@ pub fn read_phdr(enc: Encoding, data: &[u8]) -> Result<Phdr> {
     }
 }
 
+/// # Errors
+/// Returns an error if a 64-bit field does not fit its narrower ELF32 field.
 pub fn write_phdr(enc: Encoding, p: &Phdr, out: &mut Vec<u8>) -> Result<()> {
     let e = endianness(enc.endian);
     match enc.class {
@@ -259,7 +263,7 @@ pub fn write_phdr(enc: Encoding, p: &Phdr, out: &mut Vec<u8>) -> Result<()> {
     Ok(())
 }
 
-pub fn read_shdr(enc: Encoding, data: &[u8]) -> Result<Shdr> {
+pub(crate) fn read_shdr(enc: Encoding, data: &[u8]) -> Result<Shdr> {
     let e = endianness(enc.endian);
     match enc.class {
         Class::Elf64 => {
@@ -295,6 +299,8 @@ pub fn read_shdr(enc: Encoding, data: &[u8]) -> Result<Shdr> {
     }
 }
 
+/// # Errors
+/// Returns an error if a 64-bit field does not fit its narrower ELF32 field.
 pub fn write_shdr(enc: Encoding, s: &Shdr, out: &mut Vec<u8>) -> Result<()> {
     let e = endianness(enc.endian);
     match enc.class {
@@ -332,7 +338,7 @@ pub fn write_shdr(enc: Encoding, s: &Shdr, out: &mut Vec<u8>) -> Result<()> {
     Ok(())
 }
 
-pub fn read_dyn(enc: Encoding, data: &[u8]) -> Result<DynEntry> {
+pub(crate) fn read_dyn(enc: Encoding, data: &[u8]) -> Result<DynEntry> {
     let e = endianness(enc.endian);
     match enc.class {
         Class::Elf64 => {
@@ -352,6 +358,8 @@ pub fn read_dyn(enc: Encoding, data: &[u8]) -> Result<DynEntry> {
     }
 }
 
+/// # Errors
+/// Returns an error if a 64-bit field does not fit its narrower ELF32 field.
 pub fn write_dyn(enc: Encoding, d: &DynEntry, out: &mut Vec<u8>) -> Result<()> {
     let e = endianness(enc.endian);
     match enc.class {
