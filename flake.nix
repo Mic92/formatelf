@@ -30,6 +30,10 @@
 
       checks = forAll (pkgs: {
         formatting = treefmtEval.${pkgs.system}.config.build.check self;
+
+        clippy = pkgs.callPackage ./clippy.nix {
+          formatelf = self.packages.${pkgs.system}.default;
+        };
       });
 
       devShells = forAll (
