@@ -151,6 +151,8 @@ pub struct Config {
     pub interpreter: PathBuf,
     pub libc_lib: Option<PathBuf>,
     pub page_size: Option<u64>,
+    /// Worker count. 0 means auto-detect (`NIX_BUILD_CORES` or all cores).
+    pub jobs: usize,
 }
 
 /// Parse auto-formatelf's command line. The interpreter and libc default to
@@ -164,7 +166,7 @@ pub fn parse_args<I>(raw: I) -> Result<Config>
 where
     I: IntoIterator<Item = std::ffi::OsString>,
 {
-    use lexopt::prelude::Long;
+    use lexopt::prelude::{Long, Short};
 
     let mut cfg = Config {
         paths: Vec::new(),
@@ -178,6 +180,7 @@ where
         interpreter: PathBuf::new(),
         libc_lib: None,
         page_size: None,
+        jobs: 0,
     };
     let mut interpreter: Option<PathBuf> = None;
     let mut p = lexopt::Parser::from_iter(raw);
@@ -203,6 +206,13 @@ where
             Long("ignore-existing") => cfg.add_existing = false,
             Long("interpreter") => interpreter = Some(p.value().map_err(cli)?.into()),
             Long("libc") => cfg.libc_lib = Some(p.value().map_err(cli)?.into()),
+            Short('j') | Long("jobs") => {
+                let s = p.value().map_err(cli)?;
+                cfg.jobs = s
+                    .to_string_lossy()
+                    .parse()
+                    .map_err(|_| Error::Cli("auto-formatelf: invalid --jobs".into()))?;
+            }
             Long("page-size") => {
                 let s = p.value().map_err(cli)?;
                 cfg.page_size = Some(
@@ -287,13 +297,72 @@ pub fn run(cfg: &Config) -> Result<()> {
         cache.populate(l, false);
     }
 
-    let mut missing: Vec<(PathBuf, String)> = Vec::new();
     let mods = Modifiers::default();
-    for file in collect_files(&cfg.paths, cfg.recursive) {
-        patch_one(&file, &target, &cache, cfg, &mods, &mut missing)?;
-    }
+    let files = collect_files(&cfg.paths, cfg.recursive);
+    let missing = patch_all(&files, &target, &cache, cfg, &mods)?;
 
     report_missing(&missing, &cfg.ignore_missing)
+}
+
+/// Effective worker count: explicit `--jobs`, else `NIX_BUILD_CORES`, else the
+/// available parallelism. Zero in any of these means "all cores". Never more
+/// than the number of files, never less than one.
+fn worker_count(jobs: usize, files: usize) -> usize {
+    let auto = || {
+        std::env::var("NIX_BUILD_CORES")
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .filter(|&n| n > 0)
+            .or_else(|| std::thread::available_parallelism().map(usize::from).ok())
+            .unwrap_or(1)
+    };
+    let n = if jobs == 0 { auto() } else { jobs };
+    n.clamp(1, files.max(1))
+}
+
+/// Patch every file, distributing them across workers that pull from a shared
+/// cursor so a few large objects do not stall the others. Returns the merged
+/// list of unresolved dependencies, or the first patch error encountered.
+fn patch_all(
+    files: &[PathBuf],
+    target: &Target,
+    cache: &Cache,
+    cfg: &Config,
+    mods: &Modifiers,
+) -> Result<Vec<(PathBuf, String)>> {
+    let workers = worker_count(cfg.jobs, files.len());
+    if workers <= 1 {
+        let mut missing = Vec::new();
+        for file in files {
+            patch_one(file, target, cache, cfg, mods, &mut missing)?;
+        }
+        return Ok(missing);
+    }
+
+    let cursor = std::sync::atomic::AtomicUsize::new(0);
+    let mut results: Vec<Result<Vec<(PathBuf, String)>>> = Vec::new();
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut missing = Vec::new();
+                    loop {
+                        let i = cursor.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(file) = files.get(i) else { break };
+                        patch_one(file, target, cache, cfg, mods, &mut missing)?;
+                    }
+                    Ok(missing)
+                })
+            })
+            .collect();
+        results.extend(handles.into_iter().map(|h| h.join().expect("worker panicked")));
+    });
+
+    let mut missing = Vec::new();
+    for r in results {
+        missing.extend(r?);
+    }
+    Ok(missing)
 }
 
 fn patch_one(

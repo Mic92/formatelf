@@ -50,6 +50,7 @@ autoPatchelf() {
     concatTo patchelfFlagsArray patchelfFlags
 
     auto-formatelf \
+        -j "${NIX_BUILD_CORES:-0}" \
         ${norecurse:+--no-recurse} \
         --ignore-missing "${ignoreMissingDepsArray[@]}" \
         --paths "$@" \
