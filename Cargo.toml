@@ -18,6 +18,8 @@ test = false
 object = { version = "0.36", default-features = false, features = ["read_core", "elf", "std"] }
 thiserror = "2"
 lexopt = "0.3"
+memmap2 = "0.9"
+tempfile = "3"
 
 [dev-dependencies]
 proptest = { version = "1", default-features = false, features = ["std"] }
