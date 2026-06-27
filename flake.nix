@@ -28,13 +28,22 @@
 
       formatter = forAll (pkgs: treefmtEval.${pkgs.system}.config.build.wrapper);
 
-      checks = forAll (pkgs: {
-        formatting = treefmtEval.${pkgs.system}.config.build.check self;
+      checks = forAll (
+        pkgs:
+        let
+          inherit (pkgs) lib;
+          prefix = p: lib.mapAttrs' (n: lib.nameValuePair "${p}-${n}");
+        in
+        {
+          formatting = treefmtEval.${pkgs.system}.config.build.check self;
 
-        clippy = pkgs.callPackage ./clippy.nix {
-          formatelf = self.packages.${pkgs.system}.default;
-        };
-      });
+          clippy = pkgs.callPackage ./clippy.nix {
+            formatelf = self.packages.${pkgs.system}.default;
+          };
+        }
+        // prefix "package" self.packages.${pkgs.system}
+        // prefix "devShell" self.devShells.${pkgs.system}
+      );
 
       devShells = forAll (
         pkgs:
