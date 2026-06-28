@@ -65,67 +65,100 @@ fn is_separate_debug(image: &ElfImage<'_>) -> bool {
         .is_some_and(|i| image.shdrs[i].sh_type == sht::NOBITS)
 }
 
+/// A parsed shared object, ready to be folded into the cache. Parsing happens
+/// on worker threads, so this carries owned data only.
+struct ParsedLib {
+    name: String,
+    arch: Arch,
+    osabi: u8,
+    dir: PathBuf,
+    /// Non-`$ORIGIN` RUNPATH directories to follow next, with the recursion
+    /// flag inherited from the library that named them.
+    rpath_dirs: Vec<(PathBuf, bool)>,
+}
+
+/// Parse a single shared object for indexing. Returns `None` for anything that
+/// is not a usable library (unreadable, non-ELF, or a separate-debug object).
+fn parse_lib(path: &Path, recursive: bool) -> Option<ParsedLib> {
+    let data = read_if_elf(path)?;
+    let image = parser::parse(&data).ok()?;
+    if is_separate_debug(&image) {
+        return None;
+    }
+    let name = path.file_name()?.to_str()?.to_owned();
+    let dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
+    let rpath_dirs = rpath::read(&image)
+        .ok()
+        .into_iter()
+        .flat_map(|rp| {
+            rp.split(':')
+                .filter(|e| !e.is_empty() && !e.contains("$ORIGIN"))
+                .map(|e| (PathBuf::from(e), recursive))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    Some(ParsedLib {
+        name,
+        arch: Arch::of(&image),
+        osabi: image.ehdr.os_abi,
+        dir,
+        rpath_dirs,
+    })
+}
+
 impl Cache {
-    fn record(&mut self, file: &Path, image: &ElfImage<'_>) {
-        let Some(name) = file.file_name().and_then(|n| n.to_str()) else {
-            return;
+    /// Index every shared object reachable from `roots` (each a path paired
+    /// with its recursion flag). Libraries are parsed in parallel, while the
+    /// cheap directory walk, RUNPATH following, and map merge stay on this
+    /// thread. Non-`$ORIGIN` RUNPATH entries are followed, mirroring the loader.
+    fn populate(&mut self, roots: &[(PathBuf, bool)], workers: usize) {
+        // Symlinks resolve to the real store path, not one a later GC could
+        // invalidate; cache the result per directory to avoid repeat syscalls.
+        let mut dir_canon: HashMap<PathBuf, PathBuf> = HashMap::new();
+        let mut canon = |dir: &Path| -> PathBuf {
+            dir_canon
+                .entry(dir.to_path_buf())
+                .or_insert_with(|| std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf()))
+                .clone()
         };
-        let parent = file.parent().unwrap_or(Path::new("."));
-        // Resolve symlinks so the rpath points at the real store path, not a
-        // symlink that a later GC or rebuild could invalidate.
-        let dir = std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
-        self.by_soname
-            .entry((name.to_owned(), Arch::of(image)))
-            .or_default()
-            .push((dir, image.ehdr.os_abi));
-    }
 
-    /// Index every shared object reachable from `root`. `recursive` controls
-    /// descent into subdirectories; either way, non-`$ORIGIN` RUNPATH entries
-    /// of indexed libraries are followed, mirroring the dynamic loader.
-    fn populate(&mut self, root: &Path, recursive: bool) {
-        let mut stack = vec![root.to_path_buf()];
-        while let Some(dir) = stack.pop() {
-            if !self.visited.insert(dir.clone()) {
-                continue;
-            }
-            if dir.is_file() {
-                self.index_file(&dir, &mut stack);
-                continue;
-            }
-            let Ok(entries) = std::fs::read_dir(&dir) else {
-                continue;
-            };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    if recursive {
-                        stack.push(path);
+        let mut frontier: Vec<(PathBuf, bool)> = roots.to_vec();
+        while !frontier.is_empty() {
+            let mut to_parse: Vec<(PathBuf, bool)> = Vec::new();
+            let mut next: Vec<(PathBuf, bool)> = Vec::new();
+            for (path, recursive) in std::mem::take(&mut frontier) {
+                if !self.visited.insert(path.clone()) {
+                    continue;
+                }
+                if path.is_file() {
+                    to_parse.push((path, recursive));
+                    continue;
+                }
+                let Ok(entries) = std::fs::read_dir(&path) else {
+                    continue;
+                };
+                for entry in entries.flatten() {
+                    let child = entry.path();
+                    if child.is_dir() {
+                        if recursive {
+                            next.push((child, recursive));
+                        }
+                    } else if is_shared_object(&child) {
+                        to_parse.push((child, recursive));
                     }
-                } else if is_shared_object(&path) {
-                    self.index_file(&path, &mut stack);
                 }
             }
-        }
-    }
 
-    fn index_file(&mut self, path: &Path, stack: &mut Vec<PathBuf>) {
-        let Ok(data) = std::fs::read(path) else {
-            return;
-        };
-        let Ok(image) = parser::parse(&data) else {
-            return;
-        };
-        if is_separate_debug(&image) {
-            return;
-        }
-        self.record(path, &image);
-        if let Ok(rp) = rpath::read(&image) {
-            for entry in rp.split(':') {
-                if !entry.is_empty() && !entry.contains("$ORIGIN") {
-                    stack.push(PathBuf::from(entry));
-                }
+            let libs = par_map(&to_parse, workers, |(p, rec)| parse_lib(p, *rec));
+            for lib in libs {
+                let dir = canon(&lib.dir);
+                self.by_soname
+                    .entry((lib.name, lib.arch))
+                    .or_default()
+                    .push((dir, lib.osabi));
+                next.extend(lib.rpath_dirs);
             }
+            frontier = next;
         }
     }
 
@@ -183,6 +216,7 @@ where
         jobs: 0,
     };
     let mut interpreter: Option<PathBuf> = None;
+    let mut jobs: Option<usize> = None;
     let mut p = lexopt::Parser::from_iter(raw);
     let cli = |e: lexopt::Error| Error::Cli(format!("auto-formatelf: {e}"));
 
@@ -208,10 +242,11 @@ where
             Long("libc") => cfg.libc_lib = Some(p.value().map_err(cli)?.into()),
             Short('j') | Long("jobs") => {
                 let s = p.value().map_err(cli)?;
-                cfg.jobs = s
-                    .to_string_lossy()
-                    .parse()
-                    .map_err(|_| Error::Cli("auto-formatelf: invalid --jobs".into()))?;
+                jobs = Some(
+                    s.to_string_lossy()
+                        .parse()
+                        .map_err(|_| Error::Cli("auto-formatelf: invalid --jobs".into()))?,
+                );
             }
             Long("page-size") => {
                 let s = p.value().map_err(cli)?;
@@ -234,6 +269,13 @@ where
     if cfg.libc_lib.is_none() {
         cfg.libc_lib = default_libc();
     }
+    // Absent an explicit -j, honor Nix's job budget; 0 (or unset) means auto.
+    cfg.jobs = jobs.unwrap_or_else(|| {
+        std::env::var("NIX_BUILD_CORES")
+            .ok()
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(0)
+    });
     Ok(cfg)
 }
 
@@ -287,37 +329,67 @@ pub fn run(cfg: &Config) -> Result<()> {
             .to_owned(),
     };
 
+    let workers = resolve_workers(cfg.jobs);
     let mut cache = Cache::default();
+    let mut roots: Vec<(PathBuf, bool)> = Vec::new();
     if cfg.add_existing {
-        for p in &cfg.paths {
-            cache.populate(p, cfg.recursive);
-        }
+        roots.extend(cfg.paths.iter().map(|p| (p.clone(), cfg.recursive)));
     }
-    for l in &cfg.libs {
-        cache.populate(l, false);
-    }
+    roots.extend(cfg.libs.iter().map(|l| (l.clone(), false)));
+    cache.populate(&roots, workers);
 
     let mods = Modifiers::default();
     let files = collect_files(&cfg.paths, cfg.recursive);
-    let missing = patch_all(&files, &target, &cache, cfg, &mods)?;
+    let missing = patch_all(&files, &target, &cache, cfg, &mods, workers)?;
 
     report_missing(&missing, &cfg.ignore_missing)
 }
 
-/// Effective worker count: explicit `--jobs`, else `NIX_BUILD_CORES`, else the
-/// available parallelism. Zero in any of these means "all cores". Never more
-/// than the number of files, never less than one.
-fn worker_count(jobs: usize, files: usize) -> usize {
-    let auto = || {
-        std::env::var("NIX_BUILD_CORES")
-            .ok()
-            .and_then(|v| v.trim().parse::<usize>().ok())
-            .filter(|&n| n > 0)
-            .or_else(|| std::thread::available_parallelism().map(usize::from).ok())
-            .unwrap_or(1)
-    };
-    let n = if jobs == 0 { auto() } else { jobs };
-    n.clamp(1, files.max(1))
+/// Resolve the worker count: explicit `--jobs`, else the available
+/// parallelism. Zero means "all cores". Never less than one.
+fn resolve_workers(jobs: usize) -> usize {
+    if jobs == 0 {
+        std::thread::available_parallelism().map_or(1, usize::from)
+    } else {
+        jobs
+    }
+    .max(1)
+}
+
+/// Apply `f` to every item across up to `workers` threads pulling from a shared
+/// cursor, so a few heavy items do not stall the rest. Results are collected in
+/// arbitrary order; `None` results are dropped.
+fn par_map<T, R, F>(items: &[T], workers: usize, f: F) -> Vec<R>
+where
+    T: Sync,
+    R: Send,
+    F: Fn(&T) -> Option<R> + Sync,
+{
+    let workers = workers.min(items.len());
+    if workers <= 1 {
+        return items.iter().filter_map(&f).collect();
+    }
+    let cursor = std::sync::atomic::AtomicUsize::new(0);
+    let mut out = Vec::new();
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut local = Vec::new();
+                    loop {
+                        let i = cursor.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(item) = items.get(i) else { break };
+                        local.extend(f(item));
+                    }
+                    local
+                })
+            })
+            .collect();
+        for h in handles {
+            out.extend(h.join().expect("worker panicked"));
+        }
+    });
+    out
 }
 
 /// Patch every file, distributing them across workers that pull from a shared
@@ -329,8 +401,9 @@ fn patch_all(
     cache: &Cache,
     cfg: &Config,
     mods: &Modifiers,
+    workers: usize,
 ) -> Result<Vec<(PathBuf, String)>> {
-    let workers = worker_count(cfg.jobs, files.len());
+    let workers = workers.min(files.len());
     if workers <= 1 {
         let mut missing = Vec::new();
         for file in files {
@@ -385,7 +458,9 @@ fn patch_one(
     if static_exe || image.phdrs.is_empty() || is_separate_debug(&image) {
         return Ok(());
     }
-    if Arch::of(&image) != target.arch || !osabi_compatible(target.osabi, image.ehdr.os_abi) {
+    let arch = Arch::of(&image);
+    let osabi = image.ehdr.os_abi;
+    if arch != target.arch || !osabi_compatible(target.osabi, osabi) {
         return Ok(());
     }
 
@@ -396,8 +471,6 @@ fn patch_one(
         rpaths.extend(cfg.runtime_deps.iter().cloned());
     }
 
-    let arch = Arch::of(&image);
-    let osabi = image.ehdr.os_abi;
     // BSD ships ld.so separately from libc, so libc must stay in the rpath.
     let keep_libc = cfg.keep_libc || matches!(osabi, ELFOSABI_FREEBSD | ELFOSABI_OPENBSD);
 
