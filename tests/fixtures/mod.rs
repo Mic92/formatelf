@@ -81,10 +81,18 @@ pub fn copy_from(src: &Path, suffix: &str) -> PathBuf {
 /// Dynamic executables from diverse compiler/libc combos, exported as TC_* by
 /// the `toolchains` dev shell. Empty outside that shell.
 pub fn toolchain_exes() -> Vec<PathBuf> {
-    ["TC_GCC_GLIBC", "TC_CLANG_GLIBC", "TC_GCC_MUSL", "TC_CLANG_MUSL"]
-        .iter()
-        .filter_map(|v| std::env::var_os(v).map(PathBuf::from))
-        .collect()
+    [
+        "TC_GCC_GLIBC",
+        "TC_CLANG_GLIBC",
+        "TC_GCC_MUSL",
+        "TC_CLANG_MUSL",
+        "TC_CXX",
+        "TC_RUST",
+        "TC_GO_CGO",
+    ]
+    .iter()
+    .filter_map(|v| std::env::var_os(v).map(PathBuf::from))
+    .collect()
 }
 
 /// Apply our formatelf to `file`, asserting success.
