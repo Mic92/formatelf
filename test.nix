@@ -1,7 +1,8 @@
 {
   formatelf,
   callPackage,
-  toolchainFixtures,
+  # TC_* toolchain/language fixtures; empty runs only the zig + reference suite.
+  toolchainFixtures ? { },
 }:
 # Runs the suite in a derivation. package.nix keeps doCheck off because the
 # tests need zig fixtures and a reference patchelf; supply both plus the shared
