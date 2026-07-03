@@ -4,9 +4,10 @@
 
 mod fixtures;
 
-use fixtures::{copy, guard, out, patch, sample, zig_available};
+use fixtures::{copy, copy_from, guard, out, patch, sample, toolchain_exes, zig_available};
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestCaseError, TestRunner};
+use std::path::PathBuf;
 
 /// Run `test` over values from `strategy`. Each case forks our binary a few
 /// times, so keep the count modest.
@@ -18,6 +19,18 @@ fn check<S: Strategy>(strategy: S, test: impl Fn(S::Value) -> Result<(), TestCas
 
 fn path() -> impl Strategy<Value = String> {
     "(/[a-z0-9_]{1,10}){1,12}"
+}
+
+/// Dynamic executables to run the mutation laws over: the zig PIE/non-PIE
+/// fixtures plus whatever the `toolchains` shell exports.
+fn dyn_exes() -> Vec<PathBuf> {
+    let mut v = Vec::new();
+    if zig_available() {
+        v.push(sample("exe-dyn-le"));
+        v.push(sample("exe-nopie-le"));
+    }
+    v.extend(toolchain_exes());
+    v
 }
 
 fn libname() -> impl Strategy<Value = String> {
@@ -37,12 +50,12 @@ fn assert_idempotent(bin: &std::path::Path, args: &[&str]) -> Result<(), TestCas
 /// pass fits the slot the first created, so no relayout and no growth.
 #[test]
 fn set_rpath_is_idempotent() {
-    if !zig_available() {
+    let exes = dyn_exes();
+    if exes.is_empty() {
         return;
     }
-    let fixtures = prop::sample::select(vec!["exe-dyn-le", "exe-nopie-le"]);
-    check((path(), fixtures), |(rpath, fixture)| {
-        let bin = copy(fixture, "prop-idem-rpath");
+    check((path(), prop::sample::select(exes)), |(rpath, src)| {
+        let bin = copy_from(&src, "prop-idem-rpath");
         assert_idempotent(&bin, &["--set-rpath", &rpath])
     });
 }
@@ -51,12 +64,12 @@ fn set_rpath_is_idempotent() {
 /// the file stays byte-identical.
 #[test]
 fn set_interpreter_is_idempotent() {
-    if !zig_available() {
+    let exes = dyn_exes();
+    if exes.is_empty() {
         return;
     }
-    let fixtures = prop::sample::select(vec!["exe-dyn-le", "exe-nopie-le"]);
-    check((path(), fixtures), |(interp, fixture)| {
-        let bin = copy(fixture, "prop-idem-interp");
+    check((path(), prop::sample::select(exes)), |(interp, src)| {
+        let bin = copy_from(&src, "prop-idem-interp");
         assert_idempotent(&bin, &["--set-interpreter", &interp])
     });
 }
@@ -65,12 +78,11 @@ fn set_interpreter_is_idempotent() {
 /// file (e.g. re-setting `DF_1_NODEFLIB` or re-adding a `DT_DEBUG` slot).
 #[test]
 fn flag_ops_are_idempotent() {
-    if !zig_available() {
-        return;
-    }
-    for op in ["--no-default-lib", "--add-debug-tag"] {
-        let bin = copy("exe-dyn-le", "prop-idem-flag");
-        assert_idempotent(&bin, &[op]).unwrap();
+    for src in dyn_exes() {
+        for op in ["--no-default-lib", "--add-debug-tag"] {
+            let bin = copy_from(&src, "prop-idem-flag");
+            assert_idempotent(&bin, &[op]).unwrap();
+        }
     }
 }
 
