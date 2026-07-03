@@ -166,7 +166,6 @@ in
   TC_GO_CSHARED = mkGoSo;
   TC_STRIPPED = mkStripped;
   TC_RELR = mkRelr;
-  TC_GNU_PROPERTY = mkGnuProperty;
   TC_TLS = mkCFlags stdenv "tls" "$CC -O2 ${./tests/samples/sample_tls.c} -o hello";
   TC_STATIC_PIE =
     mkCFlags pkgsMusl.stdenv "static-pie"
@@ -187,8 +186,9 @@ in
     cp sample hello
   '';
 }
-# gnat throws "Unsupported system: aarch64-linux", so Ada is x86_64 only.
 // lib.optionalAttrs (stdenv.hostPlatform.system == "x86_64-linux") {
+  # -fcf-protection is x86 CET; gnat throws "Unsupported system" on aarch64.
+  TC_GNU_PROPERTY = mkGnuProperty;
   TC_ADA = mkLang "ada" gnat ''
     cp ${./tests/samples/sample.adb} sample.adb
     gnatmake sample.adb
