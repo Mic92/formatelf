@@ -8,6 +8,28 @@ fn fail(msg: impl Into<String>) -> Error {
     Error::Constraint(msg.into())
 }
 
+/// Dynamic tags whose value is a virtual address, not a size, string offset, or
+/// flag.
+const ADDR_TAGS: &[i64] = &[
+    dt::PLTGOT,
+    dt::HASH,
+    dt::GNU_HASH,
+    dt::STRTAB,
+    dt::SYMTAB,
+    dt::RELA,
+    dt::REL,
+    dt::JMPREL,
+    dt::INIT,
+    dt::FINI,
+    dt::INIT_ARRAY,
+    dt::FINI_ARRAY,
+    dt::PREINIT_ARRAY,
+    dt::RELR,
+    dt::VERDEF,
+    dt::VERNEED,
+    dt::VERSYM,
+];
+
 /// # Errors
 /// Returns an error if the image violates a structural invariant the loader
 /// relies on. `total` is the size of the file that will be written.
@@ -67,6 +89,7 @@ pub fn run(image: &ElfImage<'_>, total: u64) -> Result<()> {
     interp(image, &loads)?;
     entry(image, &loads)?;
     dynamic_consistency(image)?;
+    dynamic_addrs(image, &loads)?;
     Ok(())
 }
 
@@ -172,6 +195,30 @@ fn entry(image: &ElfImage<'_>, loads: &[&Phdr]) -> Result<()> {
         .any(|p| p.flags & pf::X != 0 && e >= p.vaddr && e < p.vaddr.saturating_add(p.memsz))
     {
         return Err(fail("entry point not inside an executable PT_LOAD"));
+    }
+    Ok(())
+}
+
+/// The classic patchelf failure: a section moves during relayout but the
+/// address-valued DT_ tag pointing at it keeps its stale address, leaving the
+/// loader reading hash/symbol/reloc tables from unmapped memory. Each such
+/// pointer must resolve inside some `PT_LOAD`.
+fn dynamic_addrs(image: &ElfImage<'_>, loads: &[&Phdr]) -> Result<()> {
+    if loads.is_empty() {
+        return Ok(());
+    }
+    let mapped = |a: u64| {
+        loads
+            .iter()
+            .any(|p| a >= p.vaddr && a < p.vaddr.saturating_add(p.memsz))
+    };
+    for d in &image.dynamic {
+        if ADDR_TAGS.contains(&d.tag) && d.val != 0 && !mapped(d.val) {
+            return Err(fail(format!(
+                "dynamic tag {:#x} points at {:#x}, outside every PT_LOAD",
+                d.tag, d.val
+            )));
+        }
     }
     Ok(())
 }
