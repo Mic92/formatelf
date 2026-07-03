@@ -67,15 +67,24 @@
           };
         }
         // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-          # Full suite over zig + TC_* fixtures and a reference patchelf. Linux
-          # only: the fixtures are ELF.
+          # Suite over zig fixtures, a reference patchelf and the TC_* fixtures.
+          # Clang is dropped: uncached on aarch64 (builds LLVM from source) and
+          # its ELF output is covered by gcc. Linux only: the fixtures are ELF.
           tests = pkgs.callPackage ./test.nix {
             formatelf = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
-            toolchainFixtures = self.legacyPackages.${pkgs.stdenv.hostPlatform.system}.toolchainFixtures;
+            toolchainFixtures =
+              builtins.removeAttrs self.legacyPackages.${pkgs.stdenv.hostPlatform.system}.toolchainFixtures
+                [
+                  "TC_CLANG_GLIBC"
+                  "TC_CLANG_MUSL"
+                ];
           };
         }
         // prefix "package" self.packages.${pkgs.stdenv.hostPlatform.system}
-        // prefix "devShell" self.devShells.${pkgs.stdenv.hostPlatform.system}
+        // prefix "devShell" (
+          # The toolchains shell realises every compiler; keep it out of CI.
+          builtins.removeAttrs self.devShells.${pkgs.stdenv.hostPlatform.system} [ "toolchains" ]
+        )
       );
 
       # Shared TC_* fixture set, exposed once per system so the toolchains shell
