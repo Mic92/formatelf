@@ -103,6 +103,6 @@ fuzz_target!(|data: &[u8]| {
     if formatelf::layout::finalize(&mut img, base, None, false, false, &mut bytes).is_ok() {
         // Whatever we emit must round-trip and hold our invariants.
         let out = formatelf::parser::parse(&bytes).expect("our output must re-parse");
-        let _ = formatelf::verify::run(&out);
+        let _ = formatelf::verify::run(&out, bytes.len() as u64);
     }
 });

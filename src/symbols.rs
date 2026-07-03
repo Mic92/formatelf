@@ -80,7 +80,12 @@ fn sym_name<'a>(
     &rest[..end]
 }
 
-pub(crate) fn rename_dynamic_symbols(
+/// Rewrite dynamic symbol names per `remap`. `pub` so the fuzz harness can
+/// drive the rename path directly.
+///
+/// # Errors
+/// Fails if the symbol or string tables cannot be rewritten.
+pub fn rename_dynamic_symbols(
     image: &mut ElfImage<'_>,
     remap: &BTreeMap<String, String>,
 ) -> Result<()> {

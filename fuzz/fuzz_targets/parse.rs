@@ -7,7 +7,7 @@ use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
     if let Ok(mut img) = formatelf::parser::parse(data) {
-        let _ = formatelf::verify::run(&img);
+        let _ = formatelf::verify::run(&img, data.len() as u64);
         let _ = formatelf::layout::finalize(&mut img, data, None, false, false, &mut Vec::new());
     }
 });

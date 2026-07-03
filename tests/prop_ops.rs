@@ -47,6 +47,33 @@ fn set_rpath_is_idempotent() {
     });
 }
 
+/// Setting the same interpreter twice reuses the slot the first pass sized, so
+/// the file stays byte-identical.
+#[test]
+fn set_interpreter_is_idempotent() {
+    if !zig_available() {
+        return;
+    }
+    let fixtures = prop::sample::select(vec!["exe-dyn-le", "exe-nopie-le"]);
+    check((path(), fixtures), |(interp, fixture)| {
+        let bin = copy(fixture, "prop-idem-interp");
+        assert_idempotent(&bin, &["--set-interpreter", &interp])
+    });
+}
+
+/// Flag-setting ops carry no argument; applying them again must not perturb the
+/// file (e.g. re-setting `DF_1_NODEFLIB` or re-adding a `DT_DEBUG` slot).
+#[test]
+fn flag_ops_are_idempotent() {
+    if !zig_available() {
+        return;
+    }
+    for op in ["--no-default-lib", "--add-debug-tag"] {
+        let bin = copy("exe-dyn-le", "prop-idem-flag");
+        assert_idempotent(&bin, &[op]).unwrap();
+    }
+}
+
 #[test]
 fn set_soname_is_idempotent() {
     if !zig_available() {
