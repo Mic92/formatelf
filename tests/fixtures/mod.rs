@@ -78,10 +78,16 @@ pub fn copy_from(src: &Path, suffix: &str) -> PathBuf {
     dst
 }
 
-/// Dynamic executables from diverse compiler/libc combos, exported as TC_* by
-/// the `toolchains` dev shell. Empty outside that shell.
+fn env_paths(vars: &[&str]) -> Vec<PathBuf> {
+    vars.iter()
+        .filter_map(|v| std::env::var_os(v).map(PathBuf::from))
+        .collect()
+}
+
+/// Dynamic executables from diverse compilers/libcs/runtimes, exported as TC_*
+/// by the `toolchains` dev shell. Empty outside that shell.
 pub fn toolchain_exes() -> Vec<PathBuf> {
-    [
+    env_paths(&[
         "TC_GCC_GLIBC",
         "TC_CLANG_GLIBC",
         "TC_GCC_MUSL",
@@ -89,10 +95,13 @@ pub fn toolchain_exes() -> Vec<PathBuf> {
         "TC_CXX",
         "TC_RUST",
         "TC_GO_CGO",
-    ]
-    .iter()
-    .filter_map(|v| std::env::var_os(v).map(PathBuf::from))
-    .collect()
+    ])
+}
+
+/// Shared objects from the same runtimes (Rust cdylib, versioned C++ lib, Go
+/// c-shared): no `PT_INTERP`, but `DT_SONAME`, exported dynsym and versions.
+pub fn toolchain_sos() -> Vec<PathBuf> {
+    env_paths(&["TC_RUST_CDYLIB", "TC_CXX_SO", "TC_GO_CSHARED"])
 }
 
 /// Apply our formatelf to `file`, asserting success.

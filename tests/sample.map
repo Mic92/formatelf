@@ -1,0 +1,6 @@
+FIXTURE_1.0 {
+  global:
+    probe;
+  local:
+    *;
+};

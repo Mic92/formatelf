@@ -87,6 +87,32 @@
         '';
         installPhase = "install -Dm755 hello $out/bin/hello";
       }}/bin/hello";
+      # Shared objects: no PT_INTERP, but DT_SONAME, exported dynsym and (C++
+      # via the version script) GNU symbol versions.
+      mkRustSo = "${stdenv.mkDerivation {
+        name = "fixture-rust-cdylib";
+        dontUnpack = true;
+        nativeBuildInputs = [ rustc ];
+        buildPhase = "rustc -O --crate-type=cdylib ${./tests/sample_cdylib.rs} -o libfixture.so";
+        installPhase = "install -Dm755 libfixture.so $out/lib/libfixture.so";
+      }}/lib/libfixture.so";
+      mkCxxSo = "${stdenv.mkDerivation {
+        name = "fixture-cxx-so";
+        dontUnpack = true;
+        buildPhase = "$CXX -shared -fPIC ${./tests/sample_lib.cpp} -Wl,--version-script=${./tests/sample.map} -Wl,-soname,libfixturecxx.so.1 -o libfixturecxx.so.1";
+        installPhase = "install -Dm755 libfixturecxx.so.1 $out/lib/libfixturecxx.so.1";
+      }}/lib/libfixturecxx.so.1";
+      mkGoSo = "${stdenv.mkDerivation {
+        name = "fixture-go-cshared";
+        dontUnpack = true;
+        nativeBuildInputs = [ go ];
+        buildPhase = ''
+          export HOME=$TMPDIR GOCACHE=$TMPDIR/gc GO111MODULE=off CGO_ENABLED=1
+          cp ${./tests/sample_cshared.go} main.go
+          go build -buildmode=c-shared -o libfixture.so main.go
+        '';
+        installPhase = "install -Dm755 libfixture.so $out/lib/libfixture.so";
+      }}/lib/libfixture.so";
     in
     mkShell {
       packages = [
@@ -100,5 +126,8 @@
       TC_CXX = mkCxx;
       TC_RUST = mkRust;
       TC_GO_CGO = mkGo;
+      TC_RUST_CDYLIB = mkRustSo;
+      TC_CXX_SO = mkCxxSo;
+      TC_GO_CSHARED = mkGoSo;
     };
 }
