@@ -12,7 +12,7 @@ mod fixtures;
 
 use fixtures::{
     assert_dynstr_synced, c_patchelf, copy_from, guard, ours, out, patch, sample, toolchain_exes,
-    toolchain_sos, zig_available,
+    toolchain_no_interp, toolchain_sos, zig_available,
 };
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestCaseError, TestRunner};
@@ -61,11 +61,12 @@ fn dyn_sos() -> Vec<PathBuf> {
     v
 }
 
-/// Every dynamic fixture, executables and shared objects. rpath, needed and
-/// flag laws apply to all.
+/// Every dynamic fixture, executables and shared objects, plus the static-PIE
+/// that has no interpreter. rpath, needed and flag laws apply to all.
 fn dyn_all() -> Vec<PathBuf> {
     let mut v = dyn_exes();
     v.extend(dyn_sos());
+    v.extend(toolchain_no_interp());
     v
 }
 

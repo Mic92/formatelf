@@ -168,6 +168,19 @@
           installPhase = "install -Dm755 hello $out/bin/hello";
         }
       }/bin/hello";
+      # Feature-driven ELF shapes a trivial hello never produces: TLS
+      # (PT_TLS), a static-PIE, and a many-DT_NEEDED binary (heavy .dynamic
+      # and VERNEED) that stresses the grow/PHT-relocation relayout path.
+      mkCFlags =
+        s: name: build:
+        "${
+          s.mkDerivation {
+            name = "fixture-${name}";
+            dontUnpack = true;
+            buildPhase = build;
+            installPhase = "install -Dm755 hello $out/bin/hello";
+          }
+        }/bin/hello";
       # Other compiled languages, for their distinct runtime DT_NEEDED and (Go,
       # FreePascal, GHC) bespoke linker/section layouts. Languages that merely
       # lower to the GNU/LLVM toolchain (Nim, Vala, Crystal) are omitted: they
@@ -205,6 +218,13 @@
       TC_STRIPPED = mkStripped;
       TC_RELR = mkRelr;
       TC_GNU_PROPERTY = mkGnuProperty;
+      TC_TLS = mkCFlags stdenv "tls" "$CC -O2 ${./tests/sample_tls.c} -o hello";
+      TC_STATIC_PIE =
+        mkCFlags pkgsMusl.stdenv "static-pie"
+          "$CC -static-pie -fPIE ${./tests/sample.c} -o hello";
+      TC_MANY_NEEDED =
+        mkCFlags stdenv "many-needed"
+          "$CC -Wl,--no-as-needed ${./tests/sample.c} -lm -ldl -lpthread -lrt -o hello";
       TC_FORTRAN = mkLang "fortran" gfortran "gfortran ${./tests/sample.f90} -o hello";
       TC_D = mkLang "d" ldc ''
         cp ${./tests/sample.d} sample.d
