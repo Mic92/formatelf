@@ -3,7 +3,7 @@
 
 mod fixtures;
 
-use fixtures::{assert_dynstr_synced, copy, guard, out, patch, sample};
+use fixtures::{assert_dynstr_synced, assert_runs, copy, guard, out, patch, sample};
 use std::path::Path;
 use std::process::Command;
 
@@ -11,7 +11,7 @@ use std::process::Command;
 fn set_interpreter_grows_and_runs() {
     let Some(reference) = guard() else { return };
     let src = sample("exe-dyn-le");
-    assert!(Command::new(&src).status().unwrap().success());
+    assert_runs(&src);
 
     // Symlink the working loader under a longer path so the grown interpreter
     // still resolves and the binary remains runnable.
@@ -27,10 +27,7 @@ fn set_interpreter_grows_and_runs() {
     patch(&bin, &["--set-interpreter", want]);
 
     assert_eq!(out(&reference, "--print-interpreter", &bin).trim(), want);
-    assert!(
-        Command::new(&bin).status().unwrap().success(),
-        "patched binary failed to run"
-    );
+    assert_runs(&bin);
 }
 
 #[test]
@@ -64,7 +61,7 @@ fn add_then_remove_needed_round_trips() {
     patch(&bin, &["--remove-needed", "libextra-placeholder.so.9"]);
     assert_eq!(out(&reference, "--print-needed", &bin), before);
     // The bogus entry is gone, so the binary loads again.
-    assert!(Command::new(&bin).status().unwrap().success());
+    assert_runs(&bin);
 }
 
 #[test]
@@ -108,7 +105,7 @@ fn remove_rpath_clears_runpath_keeps_needed() {
 fn set_rpath_grows_and_stays_loadable() {
     let Some(reference) = guard() else { return };
     let src = sample("exe-dyn-le");
-    assert!(Command::new(&src).status().unwrap().success());
+    assert_runs(&src);
     let needed = out(&reference, "--print-needed", &src);
     let interp = out(&reference, "--print-interpreter", &src);
 
@@ -120,17 +117,14 @@ fn set_rpath_grows_and_stays_loadable() {
     assert_eq!(out(&reference, "--print-needed", &bin), needed);
     assert_eq!(out(&reference, "--print-interpreter", &bin), interp);
     assert_dynstr_synced(&bin);
-    assert!(
-        Command::new(&bin).status().unwrap().success(),
-        "patched binary failed to run"
-    );
+    assert_runs(&bin);
 }
 
 #[test]
 fn set_rpath_on_non_pie_executable() {
     let Some(reference) = guard() else { return };
     let src = sample("exe-nopie-le");
-    assert!(Command::new(&src).status().unwrap().success());
+    assert_runs(&src);
 
     let bin = copy("exe-nopie-le", "rpath");
     let long = "/a/much/longer/rpath/than/before/for/the/exec/path/lib";
@@ -138,10 +132,7 @@ fn set_rpath_on_non_pie_executable() {
 
     assert_eq!(out(&reference, "--print-rpath", &bin).trim(), long);
     assert_dynstr_synced(&bin);
-    assert!(
-        Command::new(&bin).status().unwrap().success(),
-        "patched ET_EXEC failed to run"
-    );
+    assert_runs(&bin);
 }
 
 #[test]
@@ -157,7 +148,7 @@ fn add_rpath_appends_to_existing() {
         out(&reference, "--print-rpath", &bin).trim(),
         format!("{before}:/new/dir/here")
     );
-    assert!(Command::new(&bin).status().unwrap().success());
+    assert_runs(&bin);
 }
 
 #[test]
@@ -187,7 +178,7 @@ fn force_rpath_uses_dt_rpath_tag() {
             .any(|d| d.tag == formatelf::ir::dt::RUNPATH),
         "DT_RUNPATH should have been converted"
     );
-    assert!(Command::new(&bin).status().unwrap().success());
+    assert_runs(&bin);
 }
 
 #[test]
@@ -208,14 +199,14 @@ fn execstack_set_then_clear() {
         out(&reference, "--print-execstack", &bin).trim(),
         "execstack: X"
     );
-    assert!(Command::new(&bin).status().unwrap().success());
+    assert_runs(&bin);
 
     patch(&bin, &["--clear-execstack"]);
     assert_eq!(
         out(&reference, "--print-execstack", &bin).trim(),
         "execstack: -"
     );
-    assert!(Command::new(&bin).status().unwrap().success());
+    assert_runs(&bin);
 }
 
 #[test]
@@ -316,7 +307,7 @@ fn clear_symbol_version_matches_reference() {
     let ai = a.find_section(".gnu.version").unwrap();
     let bi = b.find_section(".gnu.version").unwrap();
     assert_eq!(a.section_data[ai], b.section_data[bi]);
-    assert!(Command::new(&bin_ours).status().unwrap().success());
+    assert_runs(&bin_ours);
 }
 
 #[test]
@@ -450,7 +441,7 @@ fn repeated_patching_reuses_the_appended_region() {
             "added a PT_LOAD on re-patch {n}"
         );
     }
-    assert!(Command::new(&bin).status().unwrap().success());
+    assert_runs(&bin);
 }
 
 #[test]
@@ -580,7 +571,7 @@ fn no_clobber_appends_a_fresh_region() {
         ],
     );
     assert!(loads(&bin) > before, "expected a fresh PT_LOAD");
-    assert!(Command::new(&bin).status().unwrap().success());
+    assert_runs(&bin);
 }
 
 #[test]
