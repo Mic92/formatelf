@@ -14,6 +14,12 @@
   pkgsMusl,
   go,
   elfkickers,
+  gfortran,
+  gnat,
+  ldc,
+  fpc,
+  ghc,
+  ocaml,
 }:
 {
   default = mkShell {
@@ -162,6 +168,24 @@
           installPhase = "install -Dm755 hello $out/bin/hello";
         }
       }/bin/hello";
+      # Other compiled languages, for their distinct runtime DT_NEEDED and (Go,
+      # FreePascal, GHC) bespoke linker/section layouts. Languages that merely
+      # lower to the GNU/LLVM toolchain (Nim, Vala, Crystal) are omitted: they
+      # emit the same ELF as gcc/clang, already covered.
+      mkLang =
+        name: tool: build:
+        "${
+          stdenv.mkDerivation {
+            name = "fixture-${name}";
+            dontUnpack = true;
+            nativeBuildInputs = [ tool ];
+            buildPhase = ''
+              export HOME=$TMPDIR
+              ${build}
+            '';
+            installPhase = "install -Dm755 hello $out/bin/hello";
+          }
+        }/bin/hello";
     in
     mkShell {
       packages = [
@@ -181,5 +205,22 @@
       TC_STRIPPED = mkStripped;
       TC_RELR = mkRelr;
       TC_GNU_PROPERTY = mkGnuProperty;
+      TC_FORTRAN = mkLang "fortran" gfortran "gfortran ${./tests/sample.f90} -o hello";
+      TC_D = mkLang "d" ldc ''
+        cp ${./tests/sample.d} sample.d
+        ldc2 sample.d -of=hello
+      '';
+      TC_OCAML = mkLang "ocaml" ocaml "ocamlopt ${./tests/sample.ml} -o hello";
+      TC_HASKELL = mkLang "haskell" ghc "ghc ${./tests/sample.hs} -o hello";
+      TC_ADA = mkLang "ada" gnat ''
+        cp ${./tests/sample.adb} sample.adb
+        gnatmake sample.adb
+        cp sample hello
+      '';
+      TC_PASCAL = mkLang "pascal" fpc ''
+        cp ${./tests/sample.pas} sample.pas
+        fpc sample.pas
+        cp sample hello
+      '';
     };
 }
