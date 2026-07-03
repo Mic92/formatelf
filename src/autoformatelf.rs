@@ -232,9 +232,11 @@ where
             Long("libs") => cfg.libs.extend(paths(&mut p)),
             Long("runtime-dependencies") => cfg.runtime_deps.extend(paths(&mut p)),
             Long("append-rpaths") => cfg.append_rpaths.extend(paths(&mut p)),
-            Long("ignore-missing") => cfg
-                .ignore_missing
-                .extend(multi(&mut p).iter().map(|v| v.to_string_lossy().into_owned())),
+            Long("ignore-missing") => cfg.ignore_missing.extend(
+                multi(&mut p)
+                    .iter()
+                    .map(|v| v.to_string_lossy().into_owned()),
+            ),
             Long("no-recurse") => cfg.recursive = false,
             Long("keep-libc") => cfg.keep_libc = true,
             Long("ignore-existing") => cfg.add_existing = false,
@@ -428,7 +430,11 @@ fn patch_all(
                 })
             })
             .collect();
-        results.extend(handles.into_iter().map(|h| h.join().expect("worker panicked")));
+        results.extend(
+            handles
+                .into_iter()
+                .map(|h| h.join().expect("worker panicked")),
+        );
     });
 
     let mut missing = Vec::new();
