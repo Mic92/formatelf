@@ -105,7 +105,17 @@ pub fn toolchain_exes() -> Vec<PathBuf> {
         // mutation laws apply: DT_RELR-packed and .note.gnu.property (CET).
         "TC_RELR",
         "TC_GNU_PROPERTY",
+        // Feature-driven shapes: TLS (PT_TLS) and a many-NEEDED binary with a
+        // heavy .dynamic that stresses PHT relocation.
+        "TC_TLS",
+        "TC_MANY_NEEDED",
     ])
+}
+
+/// Patchable dynamic binaries that lack a `PT_INTERP` (static-PIE): rpath and
+/// needed laws apply, but interpreter laws do not.
+pub fn toolchain_no_interp() -> Vec<PathBuf> {
+    env_paths(&["TC_STATIC_PIE"])
 }
 
 /// Shared objects from the same runtimes (Rust cdylib, versioned C++ lib, Go
