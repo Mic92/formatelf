@@ -95,6 +95,12 @@ pub fn toolchain_exes() -> Vec<PathBuf> {
         "TC_CXX",
         "TC_RUST",
         "TC_GO_CGO",
+        // Other compiled languages (dynamic): Fortran, Ada, D, Haskell, OCaml.
+        "TC_FORTRAN",
+        "TC_ADA",
+        "TC_D",
+        "TC_HASKELL",
+        "TC_OCAML",
         // Transformation states that keep their section headers, so the
         // mutation laws apply: DT_RELR-packed and .note.gnu.property (CET).
         "TC_RELR",
