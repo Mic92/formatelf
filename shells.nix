@@ -57,89 +57,111 @@
   toolchains =
     let
       # C/C++ via a stdenv's $CC/$CXX.
-      mkC = s: "${s.mkDerivation {
-        name = "fixture";
-        dontUnpack = true;
-        buildPhase = "$CC ${./tests/sample.c} -o hello";
-        installPhase = "install -Dm755 hello $out/bin/hello";
-      }}/bin/hello";
-      mkCxx = "${stdenv.mkDerivation {
-        name = "fixture-cxx";
-        dontUnpack = true;
-        buildPhase = "$CXX ${./tests/sample.cpp} -o hello";
-        installPhase = "install -Dm755 hello $out/bin/hello";
-      }}/bin/hello";
-      mkRust = "${stdenv.mkDerivation {
-        name = "fixture-rust";
-        dontUnpack = true;
-        nativeBuildInputs = [ rustc ];
-        buildPhase = "rustc -O ${./tests/sample.rs} -o hello";
-        installPhase = "install -Dm755 hello $out/bin/hello";
-      }}/bin/hello";
+      mkC =
+        s:
+        "${
+          s.mkDerivation {
+            name = "fixture";
+            dontUnpack = true;
+            buildPhase = "$CC ${./tests/sample.c} -o hello";
+            installPhase = "install -Dm755 hello $out/bin/hello";
+          }
+        }/bin/hello";
+      mkCxx = "${
+        stdenv.mkDerivation {
+          name = "fixture-cxx";
+          dontUnpack = true;
+          buildPhase = "$CXX ${./tests/sample.cpp} -o hello";
+          installPhase = "install -Dm755 hello $out/bin/hello";
+        }
+      }/bin/hello";
+      mkRust = "${
+        stdenv.mkDerivation {
+          name = "fixture-rust";
+          dontUnpack = true;
+          nativeBuildInputs = [ rustc ];
+          buildPhase = "rustc -O ${./tests/sample.rs} -o hello";
+          installPhase = "install -Dm755 hello $out/bin/hello";
+        }
+      }/bin/hello";
       # cgo forces external linking, so the output is dynamic.
-      mkGo = "${stdenv.mkDerivation {
-        name = "fixture-go";
-        dontUnpack = true;
-        nativeBuildInputs = [ go ];
-        buildPhase = ''
-          export HOME=$TMPDIR GOCACHE=$TMPDIR/gc GO111MODULE=off CGO_ENABLED=1
-          cp ${./tests/sample.go} main.go
-          go build -o hello main.go
-        '';
-        installPhase = "install -Dm755 hello $out/bin/hello";
-      }}/bin/hello";
+      mkGo = "${
+        stdenv.mkDerivation {
+          name = "fixture-go";
+          dontUnpack = true;
+          nativeBuildInputs = [ go ];
+          buildPhase = ''
+            export HOME=$TMPDIR GOCACHE=$TMPDIR/gc GO111MODULE=off CGO_ENABLED=1
+            cp ${./tests/sample.go} main.go
+            go build -o hello main.go
+          '';
+          installPhase = "install -Dm755 hello $out/bin/hello";
+        }
+      }/bin/hello";
       # Shared objects: no PT_INTERP, but DT_SONAME, exported dynsym and (C++
       # via the version script) GNU symbol versions.
-      mkRustSo = "${stdenv.mkDerivation {
-        name = "fixture-rust-cdylib";
-        dontUnpack = true;
-        nativeBuildInputs = [ rustc ];
-        buildPhase = "rustc -O --crate-type=cdylib ${./tests/sample_cdylib.rs} -o libfixture.so";
-        installPhase = "install -Dm755 libfixture.so $out/lib/libfixture.so";
-      }}/lib/libfixture.so";
-      mkCxxSo = "${stdenv.mkDerivation {
-        name = "fixture-cxx-so";
-        dontUnpack = true;
-        buildPhase = "$CXX -shared -fPIC ${./tests/sample_lib.cpp} -Wl,--version-script=${./tests/sample.map} -Wl,-soname,libfixturecxx.so.1 -o libfixturecxx.so.1";
-        installPhase = "install -Dm755 libfixturecxx.so.1 $out/lib/libfixturecxx.so.1";
-      }}/lib/libfixturecxx.so.1";
-      mkGoSo = "${stdenv.mkDerivation {
-        name = "fixture-go-cshared";
-        dontUnpack = true;
-        nativeBuildInputs = [ go ];
-        buildPhase = ''
-          export HOME=$TMPDIR GOCACHE=$TMPDIR/gc GO111MODULE=off CGO_ENABLED=1
-          cp ${./tests/sample_cshared.go} main.go
-          go build -buildmode=c-shared -o libfixture.so main.go
-        '';
-        installPhase = "install -Dm755 libfixture.so $out/lib/libfixture.so";
-      }}/lib/libfixture.so";
+      mkRustSo = "${
+        stdenv.mkDerivation {
+          name = "fixture-rust-cdylib";
+          dontUnpack = true;
+          nativeBuildInputs = [ rustc ];
+          buildPhase = "rustc -O --crate-type=cdylib ${./tests/sample_cdylib.rs} -o libfixture.so";
+          installPhase = "install -Dm755 libfixture.so $out/lib/libfixture.so";
+        }
+      }/lib/libfixture.so";
+      mkCxxSo = "${
+        stdenv.mkDerivation {
+          name = "fixture-cxx-so";
+          dontUnpack = true;
+          buildPhase = "$CXX -shared -fPIC ${./tests/sample_lib.cpp} -Wl,--version-script=${./tests/sample.map} -Wl,-soname,libfixturecxx.so.1 -o libfixturecxx.so.1";
+          installPhase = "install -Dm755 libfixturecxx.so.1 $out/lib/libfixturecxx.so.1";
+        }
+      }/lib/libfixturecxx.so.1";
+      mkGoSo = "${
+        stdenv.mkDerivation {
+          name = "fixture-go-cshared";
+          dontUnpack = true;
+          nativeBuildInputs = [ go ];
+          buildPhase = ''
+            export HOME=$TMPDIR GOCACHE=$TMPDIR/gc GO111MODULE=off CGO_ENABLED=1
+            cp ${./tests/sample_cshared.go} main.go
+            go build -buildmode=c-shared -o libfixture.so main.go
+          '';
+          installPhase = "install -Dm755 libfixture.so $out/lib/libfixture.so";
+        }
+      }/lib/libfixture.so";
       # Transformation states no compiler flag alone produces:
       # sstrip drops the section header table entirely, so patchelf must work
       # from program headers alone; pack-relative-relocs emits DT_RELR;
       # -fcf-protection adds .note.gnu.property and a PT_GNU_PROPERTY segment.
-      mkStripped = "${stdenv.mkDerivation {
-        name = "fixture-stripped";
-        dontUnpack = true;
-        nativeBuildInputs = [ elfkickers ];
-        buildPhase = ''
-          $CC ${./tests/sample.c} -o hello
-          sstrip hello
-        '';
-        installPhase = "install -Dm755 hello $out/bin/hello";
-      }}/bin/hello";
-      mkRelr = "${stdenv.mkDerivation {
-        name = "fixture-relr";
-        dontUnpack = true;
-        buildPhase = "$CC -O2 -fPIE -pie -Wl,-z,pack-relative-relocs ${./tests/sample_relr.c} -o hello";
-        installPhase = "install -Dm755 hello $out/bin/hello";
-      }}/bin/hello";
-      mkGnuProperty = "${stdenv.mkDerivation {
-        name = "fixture-gnu-property";
-        dontUnpack = true;
-        buildPhase = "$CC -fcf-protection=full ${./tests/sample.c} -o hello";
-        installPhase = "install -Dm755 hello $out/bin/hello";
-      }}/bin/hello";
+      mkStripped = "${
+        stdenv.mkDerivation {
+          name = "fixture-stripped";
+          dontUnpack = true;
+          nativeBuildInputs = [ elfkickers ];
+          buildPhase = ''
+            $CC ${./tests/sample.c} -o hello
+            sstrip hello
+          '';
+          installPhase = "install -Dm755 hello $out/bin/hello";
+        }
+      }/bin/hello";
+      mkRelr = "${
+        stdenv.mkDerivation {
+          name = "fixture-relr";
+          dontUnpack = true;
+          buildPhase = "$CC -O2 -fPIE -pie -Wl,-z,pack-relative-relocs ${./tests/sample_relr.c} -o hello";
+          installPhase = "install -Dm755 hello $out/bin/hello";
+        }
+      }/bin/hello";
+      mkGnuProperty = "${
+        stdenv.mkDerivation {
+          name = "fixture-gnu-property";
+          dontUnpack = true;
+          buildPhase = "$CC -fcf-protection=full ${./tests/sample.c} -o hello";
+          installPhase = "install -Dm755 hello $out/bin/hello";
+        }
+      }/bin/hello";
     in
     mkShell {
       packages = [
