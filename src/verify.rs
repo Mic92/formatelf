@@ -2,7 +2,7 @@
 //! layout bugs surface as errors instead of silently corrupt binaries.
 
 use crate::error::{Error, Result};
-use crate::ir::{ElfImage, Phdr, dt, pf, pt, sht};
+use crate::ir::{ElfImage, Phdr, dt, et, pf, pt, sht};
 
 fn fail(msg: impl Into<String>) -> Error {
     Error::Constraint(msg.into())
@@ -63,6 +63,9 @@ pub fn run(image: &ElfImage<'_>, total: u64) -> Result<()> {
 
     phdr_anchor(image, &loads)?;
     file_bounds(image, total)?;
+    section_links(image)?;
+    interp(image, &loads)?;
+    entry(image, &loads)?;
     dynamic_consistency(image)?;
     Ok(())
 }
@@ -100,6 +103,75 @@ fn file_bounds(image: &ElfImage<'_>, total: u64) -> Result<()> {
                 "section {i} ({name}) ends at {end:#x}, past end of file {total:#x}"
             )));
         }
+    }
+    Ok(())
+}
+
+/// `e_shstrndx` and the `sh_link` of tables that carry one must index a real
+/// section.
+fn section_links(image: &ElfImage<'_>) -> Result<()> {
+    let n = image.shdrs.len();
+    if n == 0 {
+        return Ok(());
+    }
+    if image.ehdr.shstrndx as usize >= n {
+        return Err(fail("e_shstrndx out of range"));
+    }
+    for s in &image.shdrs {
+        let uses_link = matches!(
+            s.sh_type,
+            sht::SYMTAB | sht::DYNSYM | sht::DYNAMIC | sht::RELA | sht::REL
+        );
+        if uses_link && s.link as usize >= n {
+            return Err(fail(format!(
+                "section sh_link {} out of range (0..{n})",
+                s.link
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// A stale `PT_INTERP` after growing the interpreter hands the kernel a
+/// truncated or over-long path, so it must frame the NUL-terminated `.interp`
+/// inside a load.
+fn interp(image: &ElfImage<'_>, loads: &[&Phdr]) -> Result<()> {
+    let Some(seg) = image.phdrs.iter().find(|p| p.p_type == pt::INTERP) else {
+        return Ok(());
+    };
+    if seg.filesz == 0 {
+        return Err(fail("PT_INTERP is empty"));
+    }
+    if !loads.iter().any(|p| {
+        seg.offset >= p.offset
+            && seg.offset.saturating_add(seg.filesz) <= p.offset.saturating_add(p.filesz)
+    }) {
+        return Err(fail("PT_INTERP not covered by a PT_LOAD"));
+    }
+    if let Some(i) = image.find_section(".interp") {
+        let s = &image.shdrs[i];
+        if seg.offset != s.offset || seg.filesz != s.size {
+            return Err(fail("PT_INTERP does not frame the .interp section"));
+        }
+        if image.section_data[i].last() != Some(&0) {
+            return Err(fail("interpreter path is not NUL-terminated"));
+        }
+    }
+    Ok(())
+}
+
+/// The entry point must land in an executable `PT_LOAD`, or the kernel jumps to
+/// unmapped memory.
+fn entry(image: &ElfImage<'_>, loads: &[&Phdr]) -> Result<()> {
+    if image.ehdr.entry == 0 || (image.ehdr.e_type != et::EXEC && image.ehdr.e_type != et::DYN) {
+        return Ok(());
+    }
+    let e = image.ehdr.entry;
+    if !loads
+        .iter()
+        .any(|p| p.flags & pf::X != 0 && e >= p.vaddr && e < p.vaddr.saturating_add(p.memsz))
+    {
+        return Err(fail("entry point not inside an executable PT_LOAD"));
     }
     Ok(())
 }
