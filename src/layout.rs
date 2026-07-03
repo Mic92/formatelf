@@ -97,8 +97,8 @@ pub fn finalize(
         // DT_MIPS_RLD_MAP_REL offset can change without any section moving.
         fixup_mips_rld_map_rel(image);
         sync_dynamic(image)?;
-        verify::run(image)?;
         let total = original.len() as u64;
+        verify::run(image, total)?;
         return serialize::write_to(image, original, total, out);
     }
     if debug {
@@ -284,7 +284,7 @@ fn relayout(
     fixup_dynamic_addrs(image, &moves);
     sync_dynamic(image)?;
 
-    verify::run(image)?;
+    verify::run(image, total)?;
     serialize::write_to(image, original, total, out)
 }
 

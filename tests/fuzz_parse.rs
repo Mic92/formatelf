@@ -19,7 +19,7 @@ fn run<S: Strategy>(cases: u32, s: S, f: impl Fn(S::Value) -> Result<(), TestCas
 /// verification and re-serialization without panicking.
 fn exercise(data: &[u8]) {
     if let Ok(mut img) = formatelf::parser::parse(data) {
-        let _ = formatelf::verify::run(&img);
+        let _ = formatelf::verify::run(&img, data.len() as u64);
         let _ = formatelf::layout::finalize(&mut img, data, None, false, false, &mut Vec::new());
     }
 }
@@ -71,7 +71,7 @@ fn verify_does_not_overflow_on_huge_segment() {
     put64(&mut data, 64 + 40, 0x1000); // p_memsz -> vaddr + memsz overflows
 
     let img = formatelf::parser::parse(&data).expect("header parses");
-    let _ = formatelf::verify::run(&img); // must return, not panic
+    let _ = formatelf::verify::run(&img, data.len() as u64); // must return, not panic
 }
 
 #[test]

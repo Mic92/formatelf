@@ -10,13 +10,20 @@ fn fail(msg: impl Into<String>) -> Error {
 
 /// # Errors
 /// Returns an error if the image violates a structural invariant the loader
-/// relies on.
-pub fn run(image: &ElfImage<'_>) -> Result<()> {
+/// relies on. `total` is the size of the file that will be written.
+pub fn run(image: &ElfImage<'_>, total: u64) -> Result<()> {
     let loads: Vec<_> = image
         .phdrs
         .iter()
         .filter(|p| p.p_type == pt::LOAD)
         .collect();
+
+    for p in &image.phdrs {
+        // p_align must be 0, 1, or a power of two; the loader takes it modulo.
+        if p.align > 1 && !p.align.is_power_of_two() {
+            return Err(fail("program header alignment is not a power of two"));
+        }
+    }
 
     for p in &loads {
         if p.align > 1 && (p.vaddr % p.align) != (p.offset % p.align) {
@@ -55,7 +62,45 @@ pub fn run(image: &ElfImage<'_>) -> Result<()> {
     }
 
     phdr_anchor(image, &loads)?;
+    file_bounds(image, total)?;
     dynamic_consistency(image)?;
+    Ok(())
+}
+
+/// Nothing a header references may extend past the file we are about to write.
+fn file_bounds(image: &ElfImage<'_>, total: u64) -> Result<()> {
+    let pht_end = image
+        .ehdr
+        .phoff
+        .saturating_add((image.phdrs.len() as u64).saturating_mul(u64::from(image.ehdr.phentsize)));
+    if image.ehdr.phoff != 0 && pht_end > total {
+        return Err(fail("program header table runs past end of file"));
+    }
+    let sht_end = image
+        .ehdr
+        .shoff
+        .saturating_add((image.shdrs.len() as u64).saturating_mul(u64::from(image.ehdr.shentsize)));
+    if image.ehdr.shoff != 0 && sht_end > total {
+        return Err(fail("section header table runs past end of file"));
+    }
+    for (i, p) in image.phdrs.iter().enumerate() {
+        let end = p.offset.saturating_add(p.filesz);
+        if end > total {
+            return Err(fail(format!(
+                "segment {i} ends at {end:#x}, past end of file {total:#x}"
+            )));
+        }
+    }
+    for (i, s) in image.shdrs.iter().enumerate() {
+        // SHT_NOBITS (.bss) occupies no file space, so its offset is irrelevant.
+        let end = s.offset.saturating_add(s.size);
+        if s.sh_type != sht::NOBITS && end > total {
+            let name = image.section_name(i).unwrap_or("?");
+            return Err(fail(format!(
+                "section {i} ({name}) ends at {end:#x}, past end of file {total:#x}"
+            )));
+        }
+    }
     Ok(())
 }
 
