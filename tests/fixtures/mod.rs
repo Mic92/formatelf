@@ -61,9 +61,30 @@ pub fn sample(name: &str) -> PathBuf {
 
 /// A writable copy of a fixture, named with `suffix` to keep cases isolated.
 pub fn copy(name: &str, suffix: &str) -> PathBuf {
+    copy_from(&sample(name), suffix)
+}
+
+/// A writable copy of an arbitrary source binary, named with `suffix`. Sources
+/// may live read-only in the Nix store (toolchain fixtures), so the copy is
+/// made writable.
+pub fn copy_from(src: &Path, suffix: &str) -> PathBuf {
+    let name = src.file_name().unwrap().to_string_lossy();
     let dst = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("{name}.{suffix}"));
-    std::fs::copy(sample(name), &dst).unwrap();
+    let _ = std::fs::remove_file(&dst);
+    std::fs::copy(src, &dst).unwrap();
+    let mut perms = std::fs::metadata(&dst).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+    std::fs::set_permissions(&dst, perms).unwrap();
     dst
+}
+
+/// Dynamic executables from diverse compiler/libc combos, exported as TC_* by
+/// the `toolchains` dev shell. Empty outside that shell.
+pub fn toolchain_exes() -> Vec<PathBuf> {
+    ["TC_GCC_GLIBC", "TC_CLANG_GLIBC", "TC_GCC_MUSL", "TC_CLANG_MUSL"]
+        .iter()
+        .filter_map(|v| std::env::var_os(v).map(PathBuf::from))
+        .collect()
 }
 
 /// Apply our formatelf to `file`, asserting success.
