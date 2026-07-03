@@ -17,7 +17,8 @@ rustPlatform.buildRustPackage {
   # patchelf-compatible names ship under the same flag.
   postInstall = ''
     ln -s formatelf $out/bin/auto-formatelf
-  '' + lib.optionalString patchelfSymlink ''
+  ''
+  + lib.optionalString patchelfSymlink ''
     ln -s formatelf $out/bin/patchelf
     ln -s formatelf $out/bin/auto-patchelf
   '';

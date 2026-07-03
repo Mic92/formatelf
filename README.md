@@ -1,6 +1,6 @@
 # formatelf
 
-Status: early development, not tested on a larger set of executables beyond tests in this repo.
+Status: beta, currently under testing in https://github.com/numtide/llm-agents.nix
 
 A reimplementation of [patchelf](https://github.com/NixOS/patchelf) in Rust:
 modify the dynamic linker, RPATH, and other ELF metadata of executables and
