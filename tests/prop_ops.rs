@@ -6,7 +6,9 @@
 
 mod fixtures;
 
-use fixtures::{copy_from, guard, ours, out, patch, sample, toolchain_exes, zig_available};
+use fixtures::{
+    copy_from, guard, ours, out, patch, sample, toolchain_exes, toolchain_sos, zig_available,
+};
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestCaseError, TestRunner};
 use std::path::PathBuf;
@@ -43,13 +45,22 @@ fn dyn_exes() -> Vec<PathBuf> {
     v
 }
 
+/// Dynamic shared objects, across arches/endiannesses, plus the `toolchains`
+/// shell's Rust/C++/Go libraries. soname laws apply.
+fn dyn_sos() -> Vec<PathBuf> {
+    let mut v = Vec::new();
+    if zig_available() {
+        v.extend(DYN_SOS.iter().map(|n| sample(n)));
+    }
+    v.extend(toolchain_sos());
+    v
+}
+
 /// Every dynamic fixture, executables and shared objects. rpath, needed and
 /// flag laws apply to all.
 fn dyn_all() -> Vec<PathBuf> {
     let mut v = dyn_exes();
-    if zig_available() {
-        v.extend(DYN_SOS.iter().map(|n| sample(n)));
-    }
+    v.extend(dyn_sos());
     v
 }
 
@@ -104,14 +115,26 @@ fn flag_ops_are_idempotent() {
 
 #[test]
 fn set_soname_is_idempotent() {
-    if !zig_available() {
+    let sos = dyn_sos();
+    if sos.is_empty() {
         return;
     }
-    let sos: Vec<_> = DYN_SOS.iter().map(|n| sample(n)).collect();
     check((libname(), prop::sample::select(sos)), |(soname, src)| {
         let lib = copy_from(&src, "prop-idem-soname");
         assert_idempotent(&lib, &["--set-soname", &soname])
     });
+}
+
+/// Clearing a symbol's version binding twice is a no-op the second time, so the
+/// file stays byte-identical. Uses the versioned C++ shared library, whose
+/// `probe` export carries a VERDEF entry.
+#[test]
+fn clear_symbol_version_is_idempotent() {
+    let Ok(lib) = std::env::var("TC_CXX_SO") else {
+        return;
+    };
+    let bin = copy_from(std::path::Path::new(&lib), "prop-idem-clearver");
+    assert_idempotent(&bin, &["--clear-symbol-version", "probe"]).unwrap();
 }
 
 /// Removing an rpath we just removed is a no-op, so a second remove leaves the
