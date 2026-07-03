@@ -144,6 +144,33 @@ pub fn guard() -> Option<PathBuf> {
     r
 }
 
+/// Execute `file` and assert success, but skip silently when its `PT_INTERP`
+/// loader is absent (e.g. the nix build sandbox has no `/lib64/ld-linux`).
+pub fn assert_runs(file: &Path) {
+    use formatelf::ir::pt;
+    let buf = std::fs::read(file).unwrap();
+    let img = formatelf::parser::parse(&buf).unwrap();
+    if let Some(seg) = img.phdrs.iter().find(|p| p.p_type == pt::INTERP) {
+        let start = usize::try_from(seg.offset).unwrap();
+        let end = start + usize::try_from(seg.filesz).unwrap();
+        let interp = String::from_utf8_lossy(&buf[start..end])
+            .trim_end_matches('\0')
+            .to_string();
+        if !Path::new(&interp).exists() {
+            eprintln!(
+                "skipping exec of {}: loader {interp} absent",
+                file.display()
+            );
+            return;
+        }
+    }
+    assert!(
+        Command::new(file).status().unwrap().success(),
+        "{} failed to run",
+        file.display()
+    );
+}
+
 /// The loader resolves dynamic strings via `DT_STRTAB`'s address, not the section
 /// header, so after a relayout `DT_STRTAB` must point at the relocated .dynstr.
 pub fn assert_dynstr_synced(file: &Path) {
@@ -172,7 +199,7 @@ pub fn c_patchelf() -> Option<PathBuf> {
 }
 
 pub fn zig_available() -> bool {
-    tool_available("zig", &["version"])
+    std::env::var_os("FORMATELF_ZIG_FIXTURES").is_some() || tool_available("zig", &["version"])
 }
 
 /// True if `cmd args...` runs and exits successfully.
@@ -186,6 +213,11 @@ pub fn tool_available(cmd: &str, args: &[&str]) -> bool {
 fn dir() -> &'static Path {
     static DIR: OnceLock<PathBuf> = OnceLock::new();
     DIR.get_or_init(|| {
+        // Prefer fixtures pre-built by nix (zig-fixtures.nix), so the sandbox
+        // does not pay the ~90s cold zig compile.
+        if let Some(pre) = std::env::var_os("FORMATELF_ZIG_FIXTURES") {
+            return PathBuf::from(pre);
+        }
         let d = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("elf-fixtures");
         let src = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests")

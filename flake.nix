@@ -20,6 +20,7 @@
       ];
       forAll = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
       treefmtEval = forAll (pkgs: treefmt-nix.lib.evalModule pkgs ./treefmt.nix);
+
     in
     {
       packages = forAll (
@@ -65,16 +66,37 @@
             formatelf = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
           };
         }
+        // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          # Full suite over zig + TC_* fixtures and a reference patchelf. Linux
+          # only: the fixtures are ELF.
+          tests = pkgs.callPackage ./test.nix {
+            formatelf = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+            toolchainFixtures = self.legacyPackages.${pkgs.stdenv.hostPlatform.system}.toolchainFixtures;
+          };
+        }
         // prefix "package" self.packages.${pkgs.stdenv.hostPlatform.system}
         // prefix "devShell" self.devShells.${pkgs.stdenv.hostPlatform.system}
       );
 
+      # Shared TC_* fixture set, exposed once per system so the toolchains shell
+      # and the tests check consume identical fixtures. filterAttrs drops the
+      # override/overrideDerivation callPackage adds; values stay lazy.
+      legacyPackages = forAll (pkgs: {
+        toolchainFixtures = nixpkgs.lib.filterAttrs (n: _: nixpkgs.lib.hasPrefix "TC_" n) (
+          pkgs.callPackage ./toolchain-fixtures.nix { }
+        );
+      });
+
       devShells = forAll (
         pkgs:
-        builtins.removeAttrs (pkgs.callPackage ./shells.nix { }) [
-          "override"
-          "overrideDerivation"
-        ]
+        builtins.removeAttrs
+          (pkgs.callPackage ./shells.nix {
+            toolchainFixtures = self.legacyPackages.${pkgs.stdenv.hostPlatform.system}.toolchainFixtures;
+          })
+          [
+            "override"
+            "overrideDerivation"
+          ]
       );
     };
 }
