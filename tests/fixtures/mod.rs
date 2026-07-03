@@ -189,6 +189,7 @@ fn dir() -> &'static Path {
         let d = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("elf-fixtures");
         let src = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests")
+            .join("samples")
             .join("sample.c");
         std::fs::create_dir_all(&d).unwrap();
         let cache = d.join(".zig-cache");
