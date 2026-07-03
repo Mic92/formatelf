@@ -69,7 +69,7 @@
           s.mkDerivation {
             name = "fixture";
             dontUnpack = true;
-            buildPhase = "$CC ${./tests/sample.c} -o hello";
+            buildPhase = "$CC ${./tests/samples/sample.c} -o hello";
             installPhase = "install -Dm755 hello $out/bin/hello";
           }
         }/bin/hello";
@@ -77,7 +77,7 @@
         stdenv.mkDerivation {
           name = "fixture-cxx";
           dontUnpack = true;
-          buildPhase = "$CXX ${./tests/sample.cpp} -o hello";
+          buildPhase = "$CXX ${./tests/samples/sample.cpp} -o hello";
           installPhase = "install -Dm755 hello $out/bin/hello";
         }
       }/bin/hello";
@@ -86,7 +86,7 @@
           name = "fixture-rust";
           dontUnpack = true;
           nativeBuildInputs = [ rustc ];
-          buildPhase = "rustc -O ${./tests/sample.rs} -o hello";
+          buildPhase = "rustc -O ${./tests/samples/sample.rs} -o hello";
           installPhase = "install -Dm755 hello $out/bin/hello";
         }
       }/bin/hello";
@@ -98,7 +98,7 @@
           nativeBuildInputs = [ go ];
           buildPhase = ''
             export HOME=$TMPDIR GOCACHE=$TMPDIR/gc GO111MODULE=off CGO_ENABLED=1
-            cp ${./tests/sample.go} main.go
+            cp ${./tests/samples/sample.go} main.go
             go build -o hello main.go
           '';
           installPhase = "install -Dm755 hello $out/bin/hello";
@@ -111,7 +111,7 @@
           name = "fixture-rust-cdylib";
           dontUnpack = true;
           nativeBuildInputs = [ rustc ];
-          buildPhase = "rustc -O --crate-type=cdylib ${./tests/sample_cdylib.rs} -o libfixture.so";
+          buildPhase = "rustc -O --crate-type=cdylib ${./tests/samples/sample_cdylib.rs} -o libfixture.so";
           installPhase = "install -Dm755 libfixture.so $out/lib/libfixture.so";
         }
       }/lib/libfixture.so";
@@ -119,7 +119,7 @@
         stdenv.mkDerivation {
           name = "fixture-cxx-so";
           dontUnpack = true;
-          buildPhase = "$CXX -shared -fPIC ${./tests/sample_lib.cpp} -Wl,--version-script=${./tests/sample.map} -Wl,-soname,libfixturecxx.so.1 -o libfixturecxx.so.1";
+          buildPhase = "$CXX -shared -fPIC ${./tests/samples/sample_lib.cpp} -Wl,--version-script=${./tests/samples/sample.map} -Wl,-soname,libfixturecxx.so.1 -o libfixturecxx.so.1";
           installPhase = "install -Dm755 libfixturecxx.so.1 $out/lib/libfixturecxx.so.1";
         }
       }/lib/libfixturecxx.so.1";
@@ -130,7 +130,7 @@
           nativeBuildInputs = [ go ];
           buildPhase = ''
             export HOME=$TMPDIR GOCACHE=$TMPDIR/gc GO111MODULE=off CGO_ENABLED=1
-            cp ${./tests/sample_cshared.go} main.go
+            cp ${./tests/samples/sample_cshared.go} main.go
             go build -buildmode=c-shared -o libfixture.so main.go
           '';
           installPhase = "install -Dm755 libfixture.so $out/lib/libfixture.so";
@@ -146,7 +146,7 @@
           dontUnpack = true;
           nativeBuildInputs = [ elfkickers ];
           buildPhase = ''
-            $CC ${./tests/sample.c} -o hello
+            $CC ${./tests/samples/sample.c} -o hello
             sstrip hello
           '';
           installPhase = "install -Dm755 hello $out/bin/hello";
@@ -156,7 +156,7 @@
         stdenv.mkDerivation {
           name = "fixture-relr";
           dontUnpack = true;
-          buildPhase = "$CC -O2 -fPIE -pie -Wl,-z,pack-relative-relocs ${./tests/sample_relr.c} -o hello";
+          buildPhase = "$CC -O2 -fPIE -pie -Wl,-z,pack-relative-relocs ${./tests/samples/sample_relr.c} -o hello";
           installPhase = "install -Dm755 hello $out/bin/hello";
         }
       }/bin/hello";
@@ -164,7 +164,7 @@
         stdenv.mkDerivation {
           name = "fixture-gnu-property";
           dontUnpack = true;
-          buildPhase = "$CC -fcf-protection=full ${./tests/sample.c} -o hello";
+          buildPhase = "$CC -fcf-protection=full ${./tests/samples/sample.c} -o hello";
           installPhase = "install -Dm755 hello $out/bin/hello";
         }
       }/bin/hello";
@@ -218,27 +218,27 @@
       TC_STRIPPED = mkStripped;
       TC_RELR = mkRelr;
       TC_GNU_PROPERTY = mkGnuProperty;
-      TC_TLS = mkCFlags stdenv "tls" "$CC -O2 ${./tests/sample_tls.c} -o hello";
+      TC_TLS = mkCFlags stdenv "tls" "$CC -O2 ${./tests/samples/sample_tls.c} -o hello";
       TC_STATIC_PIE =
         mkCFlags pkgsMusl.stdenv "static-pie"
-          "$CC -static-pie -fPIE ${./tests/sample.c} -o hello";
+          "$CC -static-pie -fPIE ${./tests/samples/sample.c} -o hello";
       TC_MANY_NEEDED =
         mkCFlags stdenv "many-needed"
-          "$CC -Wl,--no-as-needed ${./tests/sample.c} -lm -ldl -lpthread -lrt -o hello";
-      TC_FORTRAN = mkLang "fortran" gfortran "gfortran ${./tests/sample.f90} -o hello";
+          "$CC -Wl,--no-as-needed ${./tests/samples/sample.c} -lm -ldl -lpthread -lrt -o hello";
+      TC_FORTRAN = mkLang "fortran" gfortran "gfortran ${./tests/samples/sample.f90} -o hello";
       TC_D = mkLang "d" ldc ''
-        cp ${./tests/sample.d} sample.d
+        cp ${./tests/samples/sample.d} sample.d
         ldc2 sample.d -of=hello
       '';
-      TC_OCAML = mkLang "ocaml" ocaml "ocamlopt ${./tests/sample.ml} -o hello";
-      TC_HASKELL = mkLang "haskell" ghc "ghc ${./tests/sample.hs} -o hello";
+      TC_OCAML = mkLang "ocaml" ocaml "ocamlopt ${./tests/samples/sample.ml} -o hello";
+      TC_HASKELL = mkLang "haskell" ghc "ghc ${./tests/samples/sample.hs} -o hello";
       TC_ADA = mkLang "ada" gnat ''
-        cp ${./tests/sample.adb} sample.adb
+        cp ${./tests/samples/sample.adb} sample.adb
         gnatmake sample.adb
         cp sample hello
       '';
       TC_PASCAL = mkLang "pascal" fpc ''
-        cp ${./tests/sample.pas} sample.pas
+        cp ${./tests/samples/sample.pas} sample.pas
         fpc sample.pas
         cp sample hello
       '';
