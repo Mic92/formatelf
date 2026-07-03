@@ -1,17 +1,22 @@
-//! Idempotence/inverse property tests for the mutating ops. Generated args
-//! over real fixtures stress the layout engine's stateful paths (in-place
-//! overwrite vs grow vs region reuse) far better than single examples. The
-//! fixtures span 32/64-bit and both endiannesses (MIPS, PowerPC) plus diverse
-//! compiler/libc output, so byte-swapping and 32-bit offset paths run too.
+//! Property tests for the mutating ops. Generated args over real fixtures
+//! stress the layout engine's stateful paths (in-place overwrite vs grow vs
+//! region reuse) far better than single examples. The fixtures span 32/64-bit
+//! and both endiannesses (MIPS, PowerPC) plus diverse compiler/libc output, so
+//! byte-swapping and 32-bit offset paths run too.
+//!
+//! A silent no-op cannot pass: each mutation must read back (from us and, when
+//! built, reference patchelf), stay sound (re-parses, verifies, `DT_STRTAB` on
+//! the relocated `.dynstr`), and be a no-op when re-applied.
 
 mod fixtures;
 
 use fixtures::{
-    copy_from, guard, ours, out, patch, sample, toolchain_exes, toolchain_sos, zig_available,
+    assert_dynstr_synced, c_patchelf, copy_from, guard, ours, out, patch, sample, toolchain_exes,
+    toolchain_sos, zig_available,
 };
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestCaseError, TestRunner};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Dynamically linked executables (carry a `PT_INTERP`): interpreter ops apply.
 const DYN_EXES: &[&str] = &["exe-dyn-le", "exe-nopie-le", "exe-mips-be"];
@@ -65,7 +70,7 @@ fn dyn_all() -> Vec<PathBuf> {
 }
 
 /// Applying `args` to `bin` a second time must leave it byte-identical.
-fn assert_idempotent(bin: &std::path::Path, args: &[&str]) -> Result<(), TestCaseError> {
+fn assert_idempotent(bin: &Path, args: &[&str]) -> Result<(), TestCaseError> {
     patch(bin, args);
     let once = std::fs::read(bin).unwrap();
     patch(bin, args);
@@ -73,82 +78,153 @@ fn assert_idempotent(bin: &std::path::Path, args: &[&str]) -> Result<(), TestCas
     Ok(())
 }
 
-/// Setting the same value twice must produce a byte-identical file: the second
-/// pass fits the slot the first created, so no relayout and no growth.
+/// The emitted file must re-parse, pass verify, and keep `DT_STRTAB` pointing
+/// at the relocated `.dynstr` (the classic patchelf relayout bug).
+fn assert_sound(bin: &Path) -> Result<(), TestCaseError> {
+    let bytes = std::fs::read(bin).unwrap();
+    let img = formatelf::parser::parse(&bytes).expect("mutated output must re-parse");
+    formatelf::verify::run(&img, bytes.len() as u64)
+        .map_err(|e| TestCaseError::fail(format!("verify rejected our output: {e}")))?;
+    assert_dynstr_synced(bin);
+    Ok(())
+}
+
+/// `print_op` on `bin` must report `value`, from us and (when built) reference
+/// patchelf.
+fn reads_back(
+    bin: &Path,
+    print_op: &str,
+    value: &str,
+    reference: Option<&Path>,
+) -> Result<(), TestCaseError> {
+    let got = out(ours(), print_op, bin);
+    prop_assert_eq!(got.trim(), value);
+    if let Some(r) = reference {
+        let ref_got = out(r, print_op, bin);
+        prop_assert_eq!(ref_got.trim(), value);
+    }
+    Ok(())
+}
+
+/// Apply a set/clear op, then assert it took (`reads_back`), the output is
+/// sound, and re-applying is a no-op.
+fn assert_set(
+    bin: &Path,
+    args: &[&str],
+    print_op: &str,
+    value: &str,
+    reference: Option<&Path>,
+) -> Result<(), TestCaseError> {
+    patch(bin, args);
+    let once = std::fs::read(bin).unwrap();
+    reads_back(bin, print_op, value, reference)?;
+    assert_sound(bin)?;
+    patch(bin, args);
+    prop_assert_eq!(std::fs::read(bin).unwrap(), once);
+    Ok(())
+}
+
+/// Setting an rpath makes it read back, keeps the file sound, and re-setting
+/// the same value is a byte-identical no-op.
 #[test]
-fn set_rpath_is_idempotent() {
+fn set_rpath_applies_and_is_idempotent() {
     let exes = dyn_all();
     if exes.is_empty() {
         return;
     }
+    let reference = c_patchelf();
     check((path(), prop::sample::select(exes)), |(rpath, src)| {
         let bin = copy_from(&src, "prop-idem-rpath");
-        assert_idempotent(&bin, &["--set-rpath", &rpath])
+        let args = ["--set-rpath", &rpath];
+        assert_set(&bin, &args, "--print-rpath", &rpath, reference.as_deref())
     });
 }
 
-/// Setting the same interpreter twice reuses the slot the first pass sized, so
-/// the file stays byte-identical.
+/// Likewise for the interpreter path.
 #[test]
-fn set_interpreter_is_idempotent() {
+fn set_interpreter_applies_and_is_idempotent() {
     let exes = dyn_exes();
     if exes.is_empty() {
         return;
     }
+    let reference = c_patchelf();
     check((path(), prop::sample::select(exes)), |(interp, src)| {
         let bin = copy_from(&src, "prop-idem-interp");
-        assert_idempotent(&bin, &["--set-interpreter", &interp])
+        let args = ["--set-interpreter", &interp];
+        assert_set(
+            &bin,
+            &args,
+            "--print-interpreter",
+            &interp,
+            reference.as_deref(),
+        )
     });
 }
 
 /// Flag-setting ops carry no argument; applying them again must not perturb the
 /// file (e.g. re-setting `DF_1_NODEFLIB` or re-adding a `DT_DEBUG` slot).
+/// Flag-setting ops carry no argument; applying them again must not perturb the
+/// file (e.g. re-setting `DF_1_NODEFLIB` or re-adding a `DT_DEBUG` slot), and
+/// the result stays sound.
 #[test]
 fn flag_ops_are_idempotent() {
     for src in dyn_all() {
         for op in ["--no-default-lib", "--add-debug-tag"] {
             let bin = copy_from(&src, "prop-idem-flag");
             assert_idempotent(&bin, &[op]).unwrap();
+            assert_sound(&bin).unwrap();
         }
     }
 }
 
+/// Setting a soname makes it read back, keeps the library sound, and re-setting
+/// is a no-op.
 #[test]
-fn set_soname_is_idempotent() {
+fn set_soname_applies_and_is_idempotent() {
     let sos = dyn_sos();
     if sos.is_empty() {
         return;
     }
+    let reference = c_patchelf();
     check((libname(), prop::sample::select(sos)), |(soname, src)| {
         let lib = copy_from(&src, "prop-idem-soname");
-        assert_idempotent(&lib, &["--set-soname", &soname])
+        let args = ["--set-soname", &soname];
+        assert_set(&lib, &args, "--print-soname", &soname, reference.as_deref())
     });
 }
 
-/// Clearing a symbol's version binding twice is a no-op the second time, so the
-/// file stays byte-identical. Uses the versioned C++ shared library, whose
-/// `probe` export carries a VERDEF entry.
+/// Clearing a symbol's version binding twice is a no-op the second time and
+/// leaves the file sound. Uses the versioned C++ shared library, whose `probe`
+/// export carries a VERDEF entry.
 #[test]
 fn clear_symbol_version_is_idempotent() {
     let Ok(lib) = std::env::var("TC_CXX_SO") else {
         return;
     };
-    let bin = copy_from(std::path::Path::new(&lib), "prop-idem-clearver");
+    let bin = copy_from(Path::new(&lib), "prop-idem-clearver");
     assert_idempotent(&bin, &["--clear-symbol-version", "probe"]).unwrap();
+    assert_sound(&bin).unwrap();
 }
 
-/// Removing an rpath we just removed is a no-op, so a second remove leaves the
-/// file unchanged.
+/// Removing an rpath clears it (empty read-back), keeps the file sound, and a
+/// second remove is a no-op.
 #[test]
-fn remove_rpath_is_idempotent() {
+fn remove_rpath_clears_and_is_idempotent() {
     let exes = dyn_all();
     if exes.is_empty() {
         return;
     }
+    let reference = c_patchelf();
     check((path(), prop::sample::select(exes)), |(rpath, src)| {
         let bin = copy_from(&src, "prop-idem-rmrpath");
         patch(&bin, &["--set-rpath", &rpath]);
-        assert_idempotent(&bin, &["--remove-rpath"])
+        assert_set(
+            &bin,
+            &["--remove-rpath"],
+            "--print-rpath",
+            "",
+            reference.as_deref(),
+        )
     });
 }
 
@@ -169,7 +245,7 @@ fn replace_needed_roundtrip() {
         patch(&bin, &["--replace-needed", &first, probe]);
         patch(&bin, &["--replace-needed", probe, &first]);
         prop_assert_eq!(out(ours(), "--print-needed", &bin), needed);
-        Ok(())
+        assert_sound(&bin)
     });
 }
 
@@ -187,7 +263,7 @@ fn add_then_remove_needed_restores_list() {
             patch(&bin, &["--add-needed", &lib]);
             patch(&bin, &["--remove-needed", &lib]);
             prop_assert_eq!(out(&reference, "--print-needed", &bin), before);
-            Ok(())
+            assert_sound(&bin)
         },
     );
 }
