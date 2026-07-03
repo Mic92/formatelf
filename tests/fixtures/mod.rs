@@ -95,6 +95,10 @@ pub fn toolchain_exes() -> Vec<PathBuf> {
         "TC_CXX",
         "TC_RUST",
         "TC_GO_CGO",
+        // Transformation states that keep their section headers, so the
+        // mutation laws apply: DT_RELR-packed and .note.gnu.property (CET).
+        "TC_RELR",
+        "TC_GNU_PROPERTY",
     ])
 }
 

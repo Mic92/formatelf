@@ -13,6 +13,7 @@
   clangStdenv,
   pkgsMusl,
   go,
+  elfkickers,
 }:
 {
   default = mkShell {
@@ -113,6 +114,32 @@
         '';
         installPhase = "install -Dm755 libfixture.so $out/lib/libfixture.so";
       }}/lib/libfixture.so";
+      # Transformation states no compiler flag alone produces:
+      # sstrip drops the section header table entirely, so patchelf must work
+      # from program headers alone; pack-relative-relocs emits DT_RELR;
+      # -fcf-protection adds .note.gnu.property and a PT_GNU_PROPERTY segment.
+      mkStripped = "${stdenv.mkDerivation {
+        name = "fixture-stripped";
+        dontUnpack = true;
+        nativeBuildInputs = [ elfkickers ];
+        buildPhase = ''
+          $CC ${./tests/sample.c} -o hello
+          sstrip hello
+        '';
+        installPhase = "install -Dm755 hello $out/bin/hello";
+      }}/bin/hello";
+      mkRelr = "${stdenv.mkDerivation {
+        name = "fixture-relr";
+        dontUnpack = true;
+        buildPhase = "$CC -O2 -fPIE -pie -Wl,-z,pack-relative-relocs ${./tests/sample_relr.c} -o hello";
+        installPhase = "install -Dm755 hello $out/bin/hello";
+      }}/bin/hello";
+      mkGnuProperty = "${stdenv.mkDerivation {
+        name = "fixture-gnu-property";
+        dontUnpack = true;
+        buildPhase = "$CC -fcf-protection=full ${./tests/sample.c} -o hello";
+        installPhase = "install -Dm755 hello $out/bin/hello";
+      }}/bin/hello";
     in
     mkShell {
       packages = [
@@ -129,5 +156,8 @@
       TC_RUST_CDYLIB = mkRustSo;
       TC_CXX_SO = mkCxxSo;
       TC_GO_CSHARED = mkGoSo;
+      TC_STRIPPED = mkStripped;
+      TC_RELR = mkRelr;
+      TC_GNU_PROPERTY = mkGnuProperty;
     };
 }
