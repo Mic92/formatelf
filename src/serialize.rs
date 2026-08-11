@@ -1,9 +1,10 @@
 //! Render the output file from an ordered list of owned spans: the ELF header,
 //! the program and section header tables, and each section's data, placed at
-//! the offsets the layout engine assigned. Gaps within the original are copied
-//! verbatim from the input, so unchanged bytes (.text, padding, the stale image
-//! of a relocated section) survive without being enumerated; the grown tail
-//! stays zero. Overlapping spans signal an inconsistent layout and are rejected.
+//! the offsets the layout engine assigned. Gaps are copied verbatim from the
+//! input at `output offset - shift` (`shift` is 0 for the append layout), so
+//! unchanged bytes (.text, padding, the stale image of a relocated section)
+//! survive without being enumerated. Anything not backed by the input stays
+//! zero. Overlapping spans signal an inconsistent layout and are rejected.
 
 use std::borrow::Cow;
 use std::io::Write;
@@ -22,12 +23,14 @@ struct Span<'a> {
 /// must already have assigned every offset and synced section sizes. A region
 /// that already matches the input is dropped: the gap copy reproduces it, so
 /// the resulting spans are exactly the file's delta from the original.
-fn owned_spans<'a>(image: &'a ElfImage<'_>, original: &[u8]) -> Result<Vec<Span<'a>>> {
+fn owned_spans<'a>(image: &'a ElfImage<'_>, original: &[u8], shift: u64) -> Result<Vec<Span<'a>>> {
     let enc = image.enc;
     let mut spans = Vec::new();
     let mut push = |at: u64, bytes: Cow<'a, [u8]>| {
-        let a = usize_at(at);
-        if bytes.is_empty() || original.get(a..a + bytes.len()) == Some(bytes.as_ref()) {
+        let unchanged = at >= shift
+            && original.get(usize_at(at - shift)..usize_at(at - shift) + bytes.len())
+                == Some(bytes.as_ref());
+        if bytes.is_empty() || unchanged {
             return;
         }
         spans.push(Span { at, bytes });
@@ -70,7 +73,8 @@ fn owned_spans<'a>(image: &'a ElfImage<'_>, original: &[u8]) -> Result<Vec<Span<
         // reproduced byte-for-byte by the gap copy, so it is not a delta. Skip
         // it by pointer identity, avoiding the memcmp push() runs otherwise.
         if let Cow::Borrowed(slice) = data
-            && borrowed_offset(slice, original) == Some(s.offset)
+            && s.offset >= shift
+            && borrowed_offset(slice, original) == Some(s.offset - shift)
         {
             continue;
         }
@@ -94,24 +98,41 @@ pub(crate) fn write_to(
     total: u64,
     out: &mut dyn Write,
 ) -> Result<()> {
-    let mut spans = owned_spans(image, original)?;
+    write_to_shifted(image, original, 0, total, out)
+}
+
+/// Like [`write_to`], but every original byte appears `shift` bytes later in
+/// the output, leaving `[0, shift)` for content the layout engine placed there.
+pub(crate) fn write_to_shifted(
+    image: &ElfImage<'_>,
+    original: &[u8],
+    shift: u64,
+    total: u64,
+    out: &mut dyn Write,
+) -> Result<()> {
+    let mut spans = owned_spans(image, original, shift)?;
     spans.sort_by_key(|s| s.at);
 
     let orig_len = original.len() as u64;
     let io = |r: std::io::Result<()>| r.map_err(|e| Error::Serialize(e.to_string()));
-    // Emit `[at, at+len)` from the original, zero-filling past the input end.
-    let fill = |out: &mut dyn Write, at: u64, len: u64| -> Result<()> {
-        let start = at.min(orig_len);
-        let avail = (orig_len - start).min(len);
-        io(out.write_all(&original[usize_at(start)..usize_at(start + avail)]))?;
-        let mut pad = len - avail;
+    let zero_fill = |out: &mut dyn Write, mut len: u64| -> Result<()> {
         let zeros = [0u8; 4096];
-        while pad > 0 {
-            let n = pad.min(zeros.len() as u64);
+        while len > 0 {
+            let n = len.min(zeros.len() as u64);
             io(out.write_all(&zeros[..usize_at(n)]))?;
-            pad -= n;
+            len -= n;
         }
         Ok(())
+    };
+    // Emit `[at, at+len)` from the shifted original, zero-filling everything
+    // the input does not back (below `shift` and past its end).
+    let fill = |out: &mut dyn Write, at: u64, len: u64| -> Result<()> {
+        let lead = shift.saturating_sub(at).min(len);
+        zero_fill(out, lead)?;
+        let start = (at + lead).saturating_sub(shift).min(orig_len);
+        let avail = (orig_len - start).min(len - lead);
+        io(out.write_all(&original[usize_at(start)..usize_at(start + avail)]))?;
+        zero_fill(out, len - lead - avail)
     };
 
     let mut cur = 0u64;

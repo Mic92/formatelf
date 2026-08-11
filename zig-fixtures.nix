@@ -15,8 +15,10 @@ stdenv.mkDerivation {
   buildPhase = ''
     export ZIG_GLOBAL_CACHE_DIR=$TMPDIR/zig
     src=${./tests/samples/sample.c}
+    bunsrc=${./tests/samples/sample_bun.c}
     mkdir -p $out
     build() { zig cc -target "$2" "''${@:3}" "$src" -o "$out/$1"; }
+    buildbun() { zig cc -target "$2" "''${@:3}" "$bunsrc" -o "$out/$1"; }
     build exe-x86_64-le x86_64-linux-musl
     build exe-x86-le x86-linux-musl
     build so-aarch64-le aarch64-linux-musl -shared
@@ -27,6 +29,7 @@ stdenv.mkDerivation {
     build exe-nopie-le x86_64-linux-gnu -no-pie -fno-pie -Wl,-rpath,/opt/custom/lib
     build so-soname-le x86_64-linux-gnu -shared -Wl,-soname,libsample.so.1
     build exe-mips-be mips-linux-gnueabi -fPIE -pie
+    buildbun exe-bun-le x86_64-linux-gnu -no-pie -fno-pie
   '';
   dontInstall = true;
 }

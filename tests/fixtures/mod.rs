@@ -8,35 +8,66 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
-/// (file name, zig target triple, extra zig cc flags) covering the codec matrix:
-/// 64/32-bit and little/big-endian, plus a relocatable object.
-const SPECS: &[(&str, &str, &[&str])] = &[
-    ("exe-x86_64-le", "x86_64-linux-musl", &[]),
-    ("exe-x86-le", "x86-linux-musl", &[]),
-    ("so-aarch64-le", "aarch64-linux-musl", &["-shared"]),
-    ("so-ppc64-be", "powerpc64-linux-musl", &["-shared"]),
-    ("so-ppc-be", "powerpc-linux-musleabi", &["-shared"]),
-    ("obj-x86_64", "x86_64-linux-musl", &["-c"]),
+/// (file name, zig target triple, source file, extra zig cc flags) covering the
+/// codec matrix: 64/32-bit and little/big-endian, plus a relocatable object.
+const SPECS: &[(&str, &str, &str, &[&str])] = &[
+    ("exe-x86_64-le", "x86_64-linux-musl", "sample.c", &[]),
+    ("exe-x86-le", "x86-linux-musl", "sample.c", &[]),
+    (
+        "so-aarch64-le",
+        "aarch64-linux-musl",
+        "sample.c",
+        &["-shared"],
+    ),
+    (
+        "so-ppc64-be",
+        "powerpc64-linux-musl",
+        "sample.c",
+        &["-shared"],
+    ),
+    (
+        "so-ppc-be",
+        "powerpc-linux-musleabi",
+        "sample.c",
+        &["-shared"],
+    ),
+    ("obj-x86_64", "x86_64-linux-musl", "sample.c", &["-c"]),
     // Dynamically linked: interpreter, DT_NEEDED, DT_RUNPATH.
     (
         "exe-dyn-le",
         "x86_64-linux-gnu",
+        "sample.c",
         &["-fPIE", "-pie", "-Wl,-rpath,/opt/custom/lib"],
     ),
     // Non-PIE (ET_EXEC) executable, for the exec growth path.
     (
         "exe-nopie-le",
         "x86_64-linux-gnu",
+        "sample.c",
         &["-no-pie", "-fno-pie", "-Wl,-rpath,/opt/custom/lib"],
     ),
     // Shared object carrying a DT_SONAME.
     (
         "so-soname-le",
         "x86_64-linux-gnu",
+        "sample.c",
         &["-shared", "-Wl,-soname,libsample.so.1"],
     ),
     // MIPS PIE: exercises DT_MIPS_RLD_MAP_REL and the PT_MIPS_ABIFLAGS segment.
-    ("exe-mips-be", "mips-linux-gnueabi", &["-fPIE", "-pie"]),
+    (
+        "exe-mips-be",
+        "mips-linux-gnueabi",
+        "sample.c",
+        &["-fPIE", "-pie"],
+    ),
+    // bun-style single-file-executable template with a `.bun` section in the
+    // data segment. Patching must keep the layout bun's compile backend needs.
+    (
+        "exe-bun-le",
+        "x86_64-linux-gnu",
+        "sample_bun.c",
+        &["-no-pie", "-fno-pie"],
+    ),
 ];
 
 /// The formatelf binary under test.
@@ -219,13 +250,12 @@ fn dir() -> &'static Path {
             return PathBuf::from(pre);
         }
         let d = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("elf-fixtures");
-        let src = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let samples = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests")
-            .join("samples")
-            .join("sample.c");
+            .join("samples");
         std::fs::create_dir_all(&d).unwrap();
         let cache = d.join(".zig-cache");
-        for (name, target, extra) in SPECS {
+        for (name, target, src, extra) in SPECS {
             let out = d.join(name);
             if out.exists() {
                 continue;
@@ -233,7 +263,7 @@ fn dir() -> &'static Path {
             let status = Command::new("zig")
                 .args(["cc", "-target", target])
                 .args(*extra)
-                .arg(&src)
+                .arg(samples.join(src))
                 .arg("-o")
                 .arg(&out)
                 .env("ZIG_GLOBAL_CACHE_DIR", &cache)
