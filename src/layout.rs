@@ -8,6 +8,15 @@
 //! references, so placing them at a fresh high virtual address is safe.
 //! patchelf uses a separate shifting strategy for `ET_EXEC` only to keep the PHT
 //! at the start for very old kernels; we relocate it like the library path.
+//!
+//! Binaries carrying a `.bun` section get a prepend layout instead. bun reuses
+//! the patched binary as the template for `bun build --compile` output and
+//! assumes the writable segment holding `.bun` is both the highest mapping and
+//! the last loaded content in the file (everything after it is moved as an
+//! opaque tail). Appending a `PT_LOAD` breaks both assumptions. The new region
+//! therefore goes in front: the whole original file is shifted up and the
+//! fresh PHT plus relocated sections land in a new low-vaddr segment before
+//! the original image.
 
 use crate::codec;
 use crate::error::{Error, Result};
@@ -18,7 +27,6 @@ use crate::verify;
 /// A section relocated by relayout: its old address range and new address, used
 /// to rebase the dynamic tags that pointed into it.
 struct MovedSection {
-    idx: usize,
     old_addr: u64,
     old_size: u64,
     new_addr: u64,
@@ -110,6 +118,14 @@ pub fn finalize(
             "unsupported ELF type for relayout".into(),
         ));
     }
+    if image.find_section(".bun").is_some() {
+        // Work on a copy so an inapplicable prepend attempt (no room below the
+        // image base) leaves the append fallback with a pristine image.
+        let mut prepended = image.clone();
+        if relayout_shift(&mut prepended, original, &grown, page_size, debug, out)? {
+            return Ok(());
+        }
+    }
     relayout(image, original, &grown, page_size, reclaim, out)
 }
 
@@ -161,6 +177,165 @@ fn relocation_set(
     (region_start, relocate)
 }
 
+/// Prepend layout for bun templates (see module doc). Shifts every original
+/// byte up by a segment-aligned amount and places the new PHT and the
+/// relocated sections in a `PT_LOAD` mapped just below the original image.
+/// Returns `Ok(false)` without touching `out` when the image has no room below
+/// its base address, so the caller can fall back to the append layout.
+fn relayout_shift(
+    image: &mut ElfImage<'_>,
+    original: &[u8],
+    grown: &[usize],
+    page_size: Option<u64>,
+    debug: bool,
+    out: &mut dyn std::io::Write,
+) -> Result<bool> {
+    let sec_align = codec::dyn_size(image.enc.class) as u64;
+    let phdr_size = codec::phdr_size(image.enc.class) as u64;
+    let shdr_size = codec::shdr_size(image.enc.class) as u64;
+    let ehdr_size = u64::from(image.ehdr.ehsize);
+
+    // Also re-place anything a prior append-relayout parked past the image, so
+    // repatching does not leave a stale high `PT_LOAD` behind.
+    let (_, relocate) = relocation_set(image, grown, true);
+
+    let mut align = page_size_for(image, page_size);
+    let mut base_vaddr = u64::MAX;
+    for p in image.phdrs.iter().filter(|p| p.p_type == pt::LOAD) {
+        align = align.max(p.align);
+        base_vaddr = base_vaddr.min(p.vaddr);
+    }
+    if base_vaddr == u64::MAX || base_vaddr % align != 0 {
+        return Ok(false);
+    }
+
+    // The region holds ehdr + PHT (one extra entry for the new PT_LOAD) +
+    // relocated sections. Every original byte moves up by the region size.
+    let pht_size = (image.phdrs.len() as u64 + 1) * phdr_size;
+    let (region_offsets, needed) = region_layout(image, &relocate, ehdr_size + pht_size);
+    let shift = round_up(needed, align);
+    if base_vaddr < shift {
+        // No address space below the image (e.g. a PIE loaded at 0).
+        return Ok(false);
+    }
+    let region_vaddr = base_vaddr - shift;
+    if debug {
+        eprintln!("formatelf: .bun template; prepending {shift:#x} bytes");
+    }
+
+    let ldcache_phdr = ldcache_note_phdr(image);
+
+    // Every original byte lands `shift` later. Sections re-placed in the low
+    // region get their offsets there instead. Virtual addresses of everything
+    // outside the region are unchanged, so only file offsets move.
+    for p in &mut image.phdrs {
+        p.offset += shift;
+    }
+    for s in &mut image.shdrs {
+        s.offset += shift;
+    }
+    image.ehdr.phoff = ehdr_size;
+    let moves = place_relocated(image, &relocate, &region_offsets, 0, region_vaddr)?;
+
+    // bun requires the section header table past the loaded image, so keep it
+    // at the very end of the grown file.
+    image.ehdr.shoff = round_up(original.len() as u64 + shift, sec_align);
+    let total = image.ehdr.shoff + image.shdrs.len() as u64 * shdr_size;
+
+    // Keep PT_LOAD entries sorted by vaddr: the new region precedes the image.
+    let first_load = image
+        .phdrs
+        .iter()
+        .position(|p| p.p_type == pt::LOAD)
+        .unwrap_or(image.phdrs.len());
+    image.phdrs.insert(
+        first_load,
+        Phdr {
+            p_type: pt::LOAD,
+            flags: pf::R | pf::W,
+            offset: 0,
+            vaddr: region_vaddr,
+            paddr: region_vaddr,
+            filesz: shift,
+            memsz: shift,
+            align,
+        },
+    );
+
+    sync_segments(image, ldcache_phdr, region_vaddr + image.ehdr.phoff);
+    fixup_dynamic_addrs(image, &moves);
+    sync_dynamic(image)?;
+
+    verify::run(image, total)?;
+    serialize::write_to_shifted(image, original, shift, total, out)?;
+    Ok(true)
+}
+
+/// Assign region-relative offsets to the `relocate`d sections starting at
+/// `start`, honoring each section's `sh_addralign` (at least the dynamic-entry
+/// size). Returns the offsets and the region end. The region base is
+/// page-aligned, so an aligned offset yields an aligned address.
+fn region_layout(image: &ElfImage<'_>, relocate: &[usize], start: u64) -> (Vec<u64>, u64) {
+    let sec_align = codec::dyn_size(image.enc.class) as u64;
+    let mut cur = start;
+    let mut offsets = Vec::with_capacity(relocate.len());
+    for &i in relocate {
+        cur = round_up(cur, sec_align.max(image.shdrs[i].addralign.max(1)));
+        offsets.push(cur);
+        cur += section_len(image, i);
+    }
+    (offsets, cur)
+}
+
+/// Move the `relocate`d sections to their assigned spots in the new region
+/// (file offset `region_off + rel`, address `region_vaddr + rel`). Moving a
+/// section corrupts anything that referenced its old address by value. DT_*
+/// tags are fixed via the returned records, so refuse when relocations or
+/// symbols point into a moved section.
+fn place_relocated(
+    image: &mut ElfImage<'_>,
+    relocate: &[usize],
+    region_offsets: &[u64],
+    region_off: u64,
+    region_vaddr: u64,
+) -> Result<Vec<MovedSection>> {
+    let ranges: Vec<(u64, u64)> = relocate
+        .iter()
+        .map(|&i| (image.shdrs[i].addr, image.shdrs[i].size))
+        .filter(|&(addr, _)| addr != 0)
+        .collect();
+    assert_no_address_refs(image, &ranges)?;
+
+    let mut moves = Vec::with_capacity(relocate.len());
+    for (&i, &rel) in relocate.iter().zip(region_offsets) {
+        let len = section_len(image, i);
+        let s = &mut image.shdrs[i];
+        if s.addr != 0 {
+            moves.push(MovedSection {
+                old_addr: s.addr,
+                old_size: s.size,
+                new_addr: region_vaddr + rel,
+            });
+        }
+        s.offset = region_off + rel;
+        s.addr = region_vaddr + rel;
+        s.size = len;
+    }
+    Ok(moves)
+}
+
+/// The `PT_NOTE` covering the ld-cache note, identified while the file is
+/// still consistent so it is not confused with immovable notes like
+/// `.note.ABI-tag` after the move.
+fn ldcache_note_phdr(image: &ElfImage<'_>) -> Option<usize> {
+    let si = image.find_section(".note.nixos.ldcache")?;
+    let off = image.shdrs[si].offset;
+    image
+        .phdrs
+        .iter()
+        .position(|p| p.p_type == pt::NOTE && p.offset == off)
+}
+
 fn relayout(
     image: &mut ElfImage<'_>,
     original: &[u8],
@@ -200,18 +375,7 @@ fn relayout(
     let pht_size = round_up(new_phnum * phdr_size + ehdr_size, sec_align);
     let sht_size = round_up(image.shdrs.len() as u64 * shdr_size, sec_align);
 
-    // Region offset of each relocated section, honoring its sh_addralign (at
-    // least sec_align). region_vaddr is page-aligned, so an aligned offset
-    // yields an aligned address. The same pass sizes the region and places the
-    // sections below, so the two cannot disagree.
-    let mut cur = pht_size + sht_size;
-    let mut region_offsets = Vec::with_capacity(relocate.len());
-    for &i in &relocate {
-        cur = round_up(cur, sec_align.max(image.shdrs[i].addralign.max(1)));
-        region_offsets.push(cur);
-        cur += section_len(image, i);
-    }
-    let needed = cur;
+    let (region_offsets, needed) = region_layout(image, &relocate, pht_size + sht_size);
 
     // The kernel passes AT_PHDR = base_vaddr + e_phoff, and the loader derives
     // its load bias from PT_PHDR.vaddr, so every byte in the appended region
@@ -223,51 +387,13 @@ fn relayout(
     // +1: older binutils readelf rejects a PT_DYNAMIC as large as the file.
     let total = start_off + needed + 1;
 
-    // Moving a section to a new address corrupts anything that referenced its
-    // old address by value. We fix DT_* tags below, so refuse to relocate a
-    // section that relocations or symbols point into. Capture each moved
-    // section's old (addr, size) now, before the layout loop overwrites them.
-    let moves: Vec<MovedSection> = relocate
-        .iter()
-        .map(|&i| MovedSection {
-            idx: i,
-            old_addr: image.shdrs[i].addr,
-            old_size: image.shdrs[i].size,
-            new_addr: 0,
-        })
-        .filter(|m| m.old_addr != 0)
-        .collect();
-    let ranges: Vec<(u64, u64)> = moves.iter().map(|m| (m.old_addr, m.old_size)).collect();
-    assert_no_address_refs(image, &ranges)?;
-
-    // The ld-cache note moves with the appended region, so remember which
-    // PT_NOTE covers it now (the file is still consistent) to re-anchor it
-    // after the move. Identifying it up front avoids confusing it with
-    // immovable notes like .note.ABI-tag.
-    let ldcache_phdr = image.find_section(".note.nixos.ldcache").and_then(|si| {
-        let off = image.shdrs[si].offset;
-        image
-            .phdrs
-            .iter()
-            .position(|p| p.p_type == pt::NOTE && p.offset == off)
-    });
+    let ldcache_phdr = ldcache_note_phdr(image);
 
     // Lay out the appended region: PHT, SHT, then the relocated sections at the
     // offsets assigned above.
     image.ehdr.phoff = start_off;
     image.ehdr.shoff = start_off + pht_size;
-    for (&i, &rel_off) in relocate.iter().zip(&region_offsets) {
-        image.shdrs[i].offset = start_off + rel_off;
-        image.shdrs[i].addr = region_vaddr + rel_off;
-        image.shdrs[i].size = section_len(image, i);
-    }
-    let moves: Vec<MovedSection> = moves
-        .into_iter()
-        .map(|m| MovedSection {
-            new_addr: image.shdrs[m.idx].addr,
-            ..m
-        })
-        .collect();
+    let moves = place_relocated(image, &relocate, &region_offsets, start_off, region_vaddr)?;
 
     image.phdrs.push(Phdr {
         p_type: pt::LOAD,
@@ -280,7 +406,8 @@ fn relayout(
         align,
     });
 
-    sync_segments(image, ldcache_phdr);
+    let phdr_vaddr = image.phdrs.last().unwrap().vaddr + (image.ehdr.phoff - start_off);
+    sync_segments(image, ldcache_phdr, phdr_vaddr);
     fixup_dynamic_addrs(image, &moves);
     sync_dynamic(image)?;
 
@@ -345,13 +472,11 @@ fn assert_no_address_refs(image: &ElfImage<'_>, ranges: &[(u64, u64)]) -> Result
 }
 
 /// Re-point `PT_PHDR/PT_DYNAMIC/PT_INTERP` and the ld-cache `PT_NOTE` at their
-/// (possibly moved) targets.
-fn sync_segments(image: &mut ElfImage<'_>, ldcache_phdr: Option<usize>) {
+/// (possibly moved) targets. `phdr_vaddr` is the virtual address of the
+/// relocated program header table.
+fn sync_segments(image: &mut ElfImage<'_>, ldcache_phdr: Option<usize>, phdr_vaddr: u64) {
     let phoff = image.ehdr.phoff;
     let pht_bytes = image.phdrs.len() as u64 * codec::phdr_size(image.enc.class) as u64;
-    // PT_PHDR's vaddr maps the relocated table; it sits at the region start,
-    // whose vaddr is the new PT_LOAD vaddr (the last pushed segment).
-    let phdr_vaddr = image.phdrs.last().unwrap().vaddr;
     let extent = |i: usize| {
         let s = &image.shdrs[i];
         (s.offset, s.addr, s.size)
