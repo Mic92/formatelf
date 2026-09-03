@@ -17,10 +17,16 @@
 //! therefore goes in front: the whole original file is shifted up and the
 //! fresh PHT plus relocated sections land in a new low-vaddr segment before
 //! the original image.
+//!
+//! Files with an overlay (bytes past everything the ELF describes, e.g.
+//! `bun build --compile` output or self-extracting archives) are prepended too
+//! and keep their last bytes in place, since such payloads are found by seeking
+//! back from EOF.
 
 use crate::codec;
 use crate::error::{Error, Result};
 use crate::ir::{Class, ElfImage, Phdr, dt, et, pf, pt, shf, sht};
+use crate::parser;
 use crate::serialize;
 use crate::verify;
 
@@ -30,6 +36,26 @@ struct MovedSection {
     old_addr: u64,
     old_size: u64,
     new_addr: u64,
+}
+
+/// Whether `original` ends in non-zero bytes past everything its headers,
+/// sections and segments describe. Zero padding, such as the byte the append
+/// layout adds for readelf, does not count.
+fn has_overlay(original: &[u8]) -> Result<bool> {
+    let image = parser::parse(original)?;
+    let pht_end = image.ehdr.phoff + image.phdrs.len() as u64 * u64::from(image.ehdr.phentsize);
+    let sht_end = image.ehdr.shoff + image.shdrs.len() as u64 * u64::from(image.ehdr.shentsize);
+    let sections = image
+        .shdrs
+        .iter()
+        .filter(|s| s.sh_type != sht::NOBITS)
+        .map(|s| s.offset + s.size);
+    let segments = image.phdrs.iter().map(|p| p.offset + p.filesz);
+    let end = sections
+        .chain(segments)
+        .fold(pht_end.max(sht_end), u64::max);
+    let tail = usize::try_from(end).ok().and_then(|e| original.get(e..));
+    Ok(tail.is_some_and(|t| t.iter().any(|&b| b != 0)))
 }
 
 fn round_up(v: u64, align: u64) -> u64 {
@@ -118,12 +144,25 @@ pub fn finalize(
             "unsupported ELF type for relayout".into(),
         ));
     }
-    if image.find_section(".bun").is_some() {
+    // Checked on the file as read: ops may already have added headers.
+    let keep_tail = has_overlay(original)?;
+    if keep_tail || image.find_section(".bun").is_some() {
         // Work on a copy so an inapplicable prepend attempt (no room below the
         // image base) leaves the append fallback with a pristine image.
         let mut prepended = image.clone();
-        if relayout_shift(&mut prepended, original, &grown, page_size, debug, out)? {
+        if relayout_shift(
+            &mut prepended,
+            original,
+            &grown,
+            page_size,
+            keep_tail,
+            debug,
+            out,
+        )? {
             return Ok(());
+        }
+        if keep_tail {
+            eprintln!("formatelf: warning: no room to prepend; appending past the overlay");
         }
     }
     relayout(image, original, &grown, page_size, reclaim, out)
@@ -274,9 +313,10 @@ fn load(flags: u32, offset: u64, vaddr: u64, size: u64, align: u64) -> Phdr {
     }
 }
 
-/// Prepend layout for bun templates (see module doc). Shifts every original
+/// Prepend layout (see module doc). Shifts every original
 /// byte up by a segment-aligned amount and places the new PHT and the
 /// relocated sections in a `PT_LOAD` mapped just below the original image.
+/// With `keep_tail` the SHT goes there too, so the file's last bytes stay last.
 /// Returns `Ok(false)` without touching `out` when the image has no room below
 /// its base address, so the caller can fall back to the append layout.
 fn relayout_shift(
@@ -284,6 +324,7 @@ fn relayout_shift(
     original: &[u8],
     grown: &[usize],
     page_size: Option<u64>,
+    keep_tail: bool,
     debug: bool,
     out: &mut dyn std::io::Write,
 ) -> Result<bool> {
@@ -310,10 +351,17 @@ fn relayout_shift(
     // The region holds ehdr + PHT (with entries for the new PT_LOADs) +
     // relocated sections. Every original byte moves up by the region size.
     let phnum = image.phdrs.len() as u64;
+    let pht_size = |n: usize| ehdr_size + (phnum + n as u64) * phdr_size;
+    // With `keep_tail` the SHT goes after the PHT, like in the append layout.
+    let sht_size = if keep_tail {
+        round_up(image.shdrs.len() as u64 * shdr_size, sec_align)
+    } else {
+        0
+    };
     let region = Region::plan(
         image,
         relocate,
-        |n| ehdr_size + (phnum + n as u64) * phdr_size,
+        |n| round_up(pht_size(n), sec_align) + sht_size,
         page,
     );
     let shift = round_up(region.len, align);
@@ -323,7 +371,7 @@ fn relayout_shift(
     }
     let region_vaddr = base_vaddr - shift;
     if debug {
-        eprintln!("formatelf: .bun template; prepending {shift:#x} bytes");
+        eprintln!("formatelf: prepending {shift:#x} bytes");
     }
 
     let ldcache_phdr = ldcache_note_phdr(image);
@@ -339,10 +387,14 @@ fn relayout_shift(
     }
     image.ehdr.phoff = ehdr_size;
 
-    // bun requires the section header table past the loaded image, so keep it
-    // at the very end of the grown file.
-    image.ehdr.shoff = round_up(original.len() as u64 + shift, sec_align);
-    let total = image.ehdr.shoff + image.shdrs.len() as u64 * shdr_size;
+    // bun templates need the SHT past the loaded image.
+    let total = if keep_tail {
+        image.ehdr.shoff = round_up(pht_size(region.loads), sec_align);
+        original.len() as u64 + shift
+    } else {
+        image.ehdr.shoff = round_up(original.len() as u64 + shift, sec_align);
+        image.ehdr.shoff + image.shdrs.len() as u64 * shdr_size
+    };
 
     // The data load spans up to the exec page (or the whole shift without one).
     let data_filesz = if region.loads == 1 {

@@ -109,6 +109,24 @@ fn bun_template_prepend_layout() {
 }
 
 #[test]
+fn keeps_overlay_at_the_file_end() {
+    if !zig_available() {
+        return;
+    }
+    let overlay = b"SFX-ARCHIVE-PAYLOAD";
+    let bin = copy("exe-nopie-le", "stub-overlay");
+    let mut data = std::fs::read(&bin).unwrap();
+    data.extend_from_slice(overlay);
+    std::fs::write(&bin, &data).unwrap();
+    let entry = original_entry(&bin);
+
+    patch(&bin, &["--set-entry-stub", stub_file().to_str().unwrap()]);
+    assert!(std::fs::read(&bin).unwrap().ends_with(overlay));
+    assert_stub_layout(&bin, entry);
+    assert_runs(&bin);
+}
+
+#[test]
 fn rejects_short_stub() {
     if !zig_available() {
         return;
