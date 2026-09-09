@@ -577,6 +577,9 @@ fn no_clobber_appends_a_fresh_region() {
 #[test]
 fn adds_gnu_stack_segment_when_absent() {
     use formatelf::ir::{pf, pt};
+    if !fixtures::zig_available() {
+        return;
+    }
     let orig = std::fs::read(sample("exe-dyn-le")).unwrap();
     let mut img = formatelf::parser::parse(&orig).unwrap();
     // Drop every slot the op could otherwise reuse, forcing a fresh phdr.
