@@ -10,5 +10,6 @@ pub mod parser;
 pub mod patch;
 pub mod rpath;
 pub mod serialize;
+pub mod stub;
 pub mod symbols;
 pub mod verify;

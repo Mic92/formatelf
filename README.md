@@ -48,6 +48,13 @@ The read-only operations (`--print-rpath`, `--print-needed`,
 headers have been stripped, recovering the data from `PT_DYNAMIC` and
 `PT_INTERP`. Reference patchelf refuses these outright.
 
+`--set-entry-stub FILE` installs position-independent code as the program's
+entry point in its own `R+X` segment. The original `e_entry` is stored as a
+64-bit word at offset 8 of the installed blob and execution starts at offset
+16, so the stub can do early setup (e.g. locate and map a dynamic loader
+relative to the executable) and then chain to the real start. Re-running
+replaces the stub rather than stacking another.
+
 ## Development
 
 The flake's dev shell provides the toolchain:

@@ -164,6 +164,10 @@ fn relocation_set(
     let region_start = prior.map(|i| image.phdrs[i].offset);
     if let Some(i) = prior {
         image.phdrs.remove(i);
+        // ... and the executable PT_LOAD covering a prior entry stub, if any.
+        if let Some(x) = stub_load(image) {
+            image.phdrs.remove(x);
+        }
     }
     // Iterating in index order yields a sorted, duplicate-free list directly.
     let relocate = (0..image.shdrs.len())
@@ -175,6 +179,99 @@ fn relocation_set(
         })
         .collect();
     (region_start, relocate)
+}
+
+/// The `PT_LOAD` a prior run added for the entry stub section: executable and
+/// starting exactly at that section.
+fn stub_load(image: &ElfImage<'_>) -> Option<usize> {
+    let s = &image.shdrs[image.find_section(crate::stub::SECTION)?];
+    image.phdrs.iter().position(|p| {
+        p.p_type == pt::LOAD && p.flags & pf::X != 0 && p.offset == s.offset && p.vaddr == s.addr
+    })
+}
+
+/// The appended/prepended region: `head` bytes (ehdr/PHT/SHT as the caller
+/// needs) and the relocated sections, executable ones (the entry stub) last on
+/// their own page so no mapping is W+X. Offsets are region-relative.
+struct Region {
+    sections: Vec<usize>,
+    offsets: Vec<u64>,
+    /// end of the data part == start of the exec page (== `len` without one)
+    data_len: u64,
+    len: u64,
+    /// `PT_LOAD`s `emit` pushes: 1, or 2 with an exec part
+    loads: usize,
+}
+
+impl Region {
+    /// `head(n)` is the caller's header size given `n` new `PT_LOAD`s.
+    fn plan(
+        image: &ElfImage<'_>,
+        relocate: Vec<usize>,
+        head: impl Fn(usize) -> u64,
+        page: u64,
+    ) -> Region {
+        let (mut sections, exec): (Vec<usize>, Vec<usize>) = relocate
+            .into_iter()
+            .partition(|&i| image.shdrs[i].flags & shf::EXECINSTR == 0);
+        let loads = if exec.is_empty() { 1 } else { 2 };
+        let (mut offsets, mut len) = region_layout(image, &sections, head(loads));
+        let mut data_len = len;
+        if !exec.is_empty() {
+            data_len = round_up(len, page);
+            let (exec_offsets, exec_end) = region_layout(image, &exec, data_len);
+            sections.extend(exec);
+            offsets.extend(exec_offsets);
+            len = exec_end;
+        }
+        Region {
+            sections,
+            offsets,
+            data_len,
+            len,
+            loads,
+        }
+    }
+
+    /// Place the sections at file offset `off` == address `vaddr` and push the
+    /// covering `PT_LOAD`s (data R+W sized `data_filesz`, then exec R+X).
+    fn emit(
+        &self,
+        image: &mut ElfImage<'_>,
+        off: u64,
+        vaddr: u64,
+        data_filesz: u64,
+        align: u64,
+        page: u64,
+    ) -> Result<Vec<MovedSection>> {
+        let moves = place_relocated(image, &self.sections, &self.offsets, off, vaddr)?;
+        image
+            .phdrs
+            .push(load(pf::R | pf::W, off, vaddr, data_filesz, align));
+        if self.loads == 2 {
+            let x = self.data_len;
+            image
+                .phdrs
+                .push(load(pf::R | pf::X, off + x, vaddr + x, self.len - x, page));
+            if let Some(idx) = image.find_section(crate::stub::SECTION) {
+                image.ehdr.entry = image.shdrs[idx].addr + crate::stub::CODE_OFFSET;
+            }
+        }
+        Ok(moves)
+    }
+}
+
+fn load(flags: u32, offset: u64, vaddr: u64, size: u64, align: u64) -> Phdr {
+    Phdr {
+        p_type: pt::LOAD,
+        flags,
+        offset,
+        vaddr,
+        paddr: vaddr,
+        filesz: size,
+        memsz: size,
+        align,
+    }
 }
 
 /// Prepend layout for bun templates (see module doc). Shifts every original
@@ -198,8 +295,9 @@ fn relayout_shift(
     // Also re-place anything a prior append-relayout parked past the image, so
     // repatching does not leave a stale high `PT_LOAD` behind.
     let (_, relocate) = relocation_set(image, grown, true);
+    let page = page_size_for(image, page_size);
 
-    let mut align = page_size_for(image, page_size);
+    let mut align = page;
     let mut base_vaddr = u64::MAX;
     for p in image.phdrs.iter().filter(|p| p.p_type == pt::LOAD) {
         align = align.max(p.align);
@@ -209,11 +307,16 @@ fn relayout_shift(
         return Ok(false);
     }
 
-    // The region holds ehdr + PHT (one extra entry for the new PT_LOAD) +
+    // The region holds ehdr + PHT (with entries for the new PT_LOADs) +
     // relocated sections. Every original byte moves up by the region size.
-    let pht_size = (image.phdrs.len() as u64 + 1) * phdr_size;
-    let (region_offsets, needed) = region_layout(image, &relocate, ehdr_size + pht_size);
-    let shift = round_up(needed, align);
+    let phnum = image.phdrs.len() as u64;
+    let region = Region::plan(
+        image,
+        relocate,
+        |n| ehdr_size + (phnum + n as u64) * phdr_size,
+        page,
+    );
+    let shift = round_up(region.len, align);
     if base_vaddr < shift {
         // No address space below the image (e.g. a PIE loaded at 0).
         return Ok(false);
@@ -235,32 +338,26 @@ fn relayout_shift(
         s.offset += shift;
     }
     image.ehdr.phoff = ehdr_size;
-    let moves = place_relocated(image, &relocate, &region_offsets, 0, region_vaddr)?;
 
     // bun requires the section header table past the loaded image, so keep it
     // at the very end of the grown file.
     image.ehdr.shoff = round_up(original.len() as u64 + shift, sec_align);
     let total = image.ehdr.shoff + image.shdrs.len() as u64 * shdr_size;
 
+    // The data load spans up to the exec page (or the whole shift without one).
+    let data_filesz = if region.loads == 1 {
+        shift
+    } else {
+        region.data_len
+    };
+    let moves = region.emit(image, 0, region_vaddr, data_filesz, align, page)?;
     // Keep PT_LOAD entries sorted by vaddr: the new region precedes the image.
     let first_load = image
         .phdrs
         .iter()
         .position(|p| p.p_type == pt::LOAD)
-        .unwrap_or(image.phdrs.len());
-    image.phdrs.insert(
-        first_load,
-        Phdr {
-            p_type: pt::LOAD,
-            flags: pf::R | pf::W,
-            offset: 0,
-            vaddr: region_vaddr,
-            paddr: region_vaddr,
-            filesz: shift,
-            memsz: shift,
-            align,
-        },
-    );
+        .unwrap_or(0);
+    image.phdrs[first_load..].rotate_right(region.loads);
 
     sync_segments(image, ldcache_phdr, region_vaddr + image.ehdr.phoff);
     fixup_dynamic_addrs(image, &moves);
@@ -370,12 +467,11 @@ fn relayout(
     };
     start_page = round_up(start_page, align);
 
-    // One extra PHT entry for the new PT_LOAD.
-    let new_phnum = image.phdrs.len() as u64 + 1;
-    let pht_size = round_up(new_phnum * phdr_size + ehdr_size, sec_align);
+    // Region head: PHT (with entries for the new PT_LOADs) + SHT.
+    let phnum = image.phdrs.len() as u64;
+    let pht_size = |n: usize| round_up((phnum + n as u64) * phdr_size + ehdr_size, sec_align);
     let sht_size = round_up(image.shdrs.len() as u64 * shdr_size, sec_align);
-
-    let (region_offsets, needed) = region_layout(image, &relocate, pht_size + sht_size);
+    let region = Region::plan(image, relocate, |n| pht_size(n) + sht_size, page);
 
     // The kernel passes AT_PHDR = base_vaddr + e_phoff, and the loader derives
     // its load bias from PT_PHDR.vaddr, so every byte in the appended region
@@ -385,29 +481,15 @@ fn relayout(
     let start_off = round_up(region_start.unwrap_or(orig_len).max(min_off), align);
     let region_vaddr = base_vaddr + start_off;
     // +1: older binutils readelf rejects a PT_DYNAMIC as large as the file.
-    let total = start_off + needed + 1;
+    let total = start_off + region.len + 1;
 
     let ldcache_phdr = ldcache_note_phdr(image);
 
-    // Lay out the appended region: PHT, SHT, then the relocated sections at the
-    // offsets assigned above.
     image.ehdr.phoff = start_off;
-    image.ehdr.shoff = start_off + pht_size;
-    let moves = place_relocated(image, &relocate, &region_offsets, start_off, region_vaddr)?;
+    image.ehdr.shoff = start_off + pht_size(region.loads);
+    let moves = region.emit(image, start_off, region_vaddr, region.data_len, align, page)?;
 
-    image.phdrs.push(Phdr {
-        p_type: pt::LOAD,
-        flags: pf::R | pf::W,
-        offset: start_off,
-        vaddr: region_vaddr,
-        paddr: region_vaddr,
-        filesz: needed,
-        memsz: needed,
-        align,
-    });
-
-    let phdr_vaddr = image.phdrs.last().unwrap().vaddr + (image.ehdr.phoff - start_off);
-    sync_segments(image, ldcache_phdr, phdr_vaddr);
+    sync_segments(image, ldcache_phdr, region_vaddr);
     fixup_dynamic_addrs(image, &moves);
     sync_dynamic(image)?;
 

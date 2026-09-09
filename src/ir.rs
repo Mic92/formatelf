@@ -121,6 +121,7 @@ pub struct DynEntry {
 }
 
 pub mod sht {
+    pub const PROGBITS: u32 = 1;
     pub const SYMTAB: u32 = 2;
     pub const STRTAB: u32 = 3;
     pub const RELA: u32 = 4;
@@ -133,6 +134,7 @@ pub mod sht {
 
 pub mod shf {
     pub const ALLOC: u64 = 0x2;
+    pub const EXECINSTR: u64 = 0x4;
 }
 
 pub mod et {

@@ -33,6 +33,7 @@ pub enum Operation {
     ClearExecstack,
     SetExecstack,
     RenameDynamicSymbols(PathBuf),
+    SetEntryStub(PathBuf),
 }
 
 /// Global flags plus the ordered operation list and target files.
@@ -138,6 +139,7 @@ where
                 args.ops.push(Operation::ClearSymbolVersion(val(&mut p)?));
             }
             Long("add-debug-tag") => args.ops.push(Operation::AddDebugTag),
+            Long("set-entry-stub") => args.ops.push(Operation::SetEntryStub(path_val(&mut p)?)),
             Long("build-resolution-cache") => args.ops.push(Operation::BuildResolutionCache),
             Long("print-execstack") => args.ops.push(Operation::PrintExecstack),
             Long("clear-execstack") => args.ops.push(Operation::ClearExecstack),
@@ -165,6 +167,7 @@ where
 pub const HELP: &str = "\
 syntax: formatelf
   [--set-interpreter FILENAME]
+  [--set-entry-stub FILE]
   [--page-size SIZE]
   [--print-interpreter]
   [--print-os-abi]

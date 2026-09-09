@@ -76,6 +76,7 @@ pub fn apply(
             crate::symbols::rename_dynamic_symbols(image, &parse_symbol_map(path)?)?;
         }
         Operation::BuildResolutionCache => crate::ldcache::build(image)?,
+        Operation::SetEntryStub(file) => crate::stub::set(image, file)?,
     }
     Ok(())
 }
