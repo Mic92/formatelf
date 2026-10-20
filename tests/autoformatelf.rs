@@ -5,9 +5,17 @@
 mod fixtures;
 
 use fixtures::{ours, out, sample, zig_available};
+use std::fs;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::Command;
+
+fn stage_dependencies(lib: &Path, dir: &Path) {
+    fs::create_dir_all(dir).unwrap();
+    for soname in ["libc.so.6", "ld-linux-x86-64.so.2", "libpthread.so.0"] {
+        fs::copy(lib, dir.join(soname)).unwrap();
+    }
+}
 
 #[test]
 fn auto_formatelf_sets_interpreter_and_rpath() {
@@ -20,16 +28,12 @@ fn auto_formatelf_sets_interpreter_and_rpath() {
     let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join("autofe");
     let bin = root.join("bin");
     let libdir = root.join("lib");
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&bin).unwrap();
-    std::fs::create_dir_all(&libdir).unwrap();
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&bin).unwrap();
 
     let app = bin.join("app");
-    std::fs::copy(&exe, &app).unwrap();
-    // Stand in for every library the executable needs, under the right soname.
-    for soname in ["libc.so.6", "ld-linux-x86-64.so.2", "libpthread.so.0"] {
-        std::fs::copy(&lib, libdir.join(soname)).unwrap();
-    }
+    fs::copy(&exe, &app).unwrap();
+    stage_dependencies(&lib, &libdir);
 
     let status = Command::new(ours())
         .arg0("auto-formatelf")
@@ -57,6 +61,60 @@ fn auto_formatelf_sets_interpreter_and_rpath() {
 }
 
 #[test]
+fn auto_formatelf_resolves_duplicate_libraries_in_search_order() {
+    if !zig_available() {
+        return;
+    }
+    let exe = sample("exe-dyn-le");
+    let lib = sample("so-soname-le");
+    let root = tempfile::tempdir().unwrap();
+    let bin = root.path().join("bin");
+    let bundled = root.path().join("bundled");
+    let first = bundled.join("z-first");
+    let second = bundled.join("a-second");
+    fs::create_dir_all(&bin).unwrap();
+    // Search order is the reverse of lexical order.
+    for dir in [&first, &second] {
+        stage_dependencies(&lib, dir);
+    }
+    let app = bin.join("app");
+    for (paths, libs, expected) in [
+        (vec![&bin], vec![&first, &second], &first),
+        (vec![&bin, &bundled], vec![], &second),
+    ] {
+        let expected = fs::canonicalize(expected).unwrap();
+        for jobs in [1, 2, 4] {
+            // The fixture is read-only and fs::copy keeps its mode.
+            let _ = fs::remove_file(&app);
+            fs::copy(&exe, &app).unwrap();
+            let status = Command::new(ours())
+                .arg0("auto-formatelf")
+                .arg("--interpreter")
+                .arg(&exe)
+                .arg("--libc")
+                .arg(root.path())
+                .arg("--jobs")
+                .arg(jobs.to_string())
+                .arg("--paths")
+                .args(&paths)
+                .arg("--libs")
+                .args(&libs)
+                .status()
+                .unwrap();
+            assert!(
+                status.success(),
+                "auto-formatelf failed with {jobs} workers"
+            );
+            assert_eq!(
+                out(ours(), "--print-rpath", &app).trim(),
+                expected.to_str().unwrap(),
+                "search paths {libs:?} with {jobs} workers"
+            );
+        }
+    }
+}
+
+#[test]
 fn auto_formatelf_reports_unresolved_dependencies() {
     if !zig_available() {
         return;
@@ -64,9 +122,9 @@ fn auto_formatelf_reports_unresolved_dependencies() {
     let exe = sample("exe-dyn-le");
     let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join("autofe-missing");
     let bin = root.join("bin");
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&bin).unwrap();
-    std::fs::copy(&exe, bin.join("app")).unwrap();
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&bin).unwrap();
+    fs::copy(&exe, bin.join("app")).unwrap();
 
     // No --libs and an empty libc dir, so the deps cannot be found: must fail.
     let status = Command::new(ours())

@@ -4,7 +4,12 @@
 //! directories, and set the interpreter and RUNPATH accordingly.
 
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsString;
+use std::fs::{self, DirEntry};
+use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::thread;
 
 use crate::cli::Operation;
 use crate::error::{Error, Result};
@@ -106,6 +111,14 @@ fn parse_lib(path: &Path, recursive: bool) -> Option<ParsedLib> {
     })
 }
 
+/// `read_dir` order is filesystem-dependent; sort so duplicate providers
+/// resolve the same way everywhere.
+fn sorted_entries(path: &Path) -> io::Result<Vec<DirEntry>> {
+    let mut entries: Vec<_> = fs::read_dir(path)?.flatten().collect();
+    entries.sort_by_key(DirEntry::file_name);
+    Ok(entries)
+}
+
 impl Cache {
     /// Index every shared object reachable from `roots` (each a path paired
     /// with its recursion flag). Libraries are parsed in parallel, while the
@@ -118,7 +131,7 @@ impl Cache {
         let mut canon = |dir: &Path| -> PathBuf {
             dir_canon
                 .entry(dir.to_path_buf())
-                .or_insert_with(|| std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf()))
+                .or_insert_with(|| fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf()))
                 .clone()
         };
 
@@ -134,10 +147,10 @@ impl Cache {
                     to_parse.push((path, recursive));
                     continue;
                 }
-                let Ok(entries) = std::fs::read_dir(&path) else {
+                let Ok(entries) = sorted_entries(&path) else {
                     continue;
                 };
-                for entry in entries.flatten() {
+                for entry in entries {
                     let child = entry.path();
                     if child.is_dir() {
                         if recursive {
@@ -197,7 +210,7 @@ pub struct Config {
 /// determined.
 pub fn parse_args<I>(raw: I) -> Result<Config>
 where
-    I: IntoIterator<Item = std::ffi::OsString>,
+    I: IntoIterator<Item = OsString>,
 {
     use lexopt::prelude::{Long, Short};
 
@@ -223,7 +236,7 @@ where
     while let Some(arg) = p.next().map_err(cli)? {
         // These options take zero or more values (argparse nargs="*"); lexopt's
         // values() errors when none follow, so treat that as an empty list.
-        let multi = |p: &mut lexopt::Parser| -> Vec<std::ffi::OsString> {
+        let multi = |p: &mut lexopt::Parser| -> Vec<OsString> {
             p.values().map(Iterator::collect).unwrap_or_default()
         };
         let paths = |p: &mut lexopt::Parser| multi(p).into_iter().map(PathBuf::from);
@@ -297,7 +310,7 @@ fn default_interpreter() -> Result<PathBuf> {
 
 fn default_libc() -> Option<PathBuf> {
     let file = nix_support()?.join("orig-libc");
-    let text = std::fs::read(&file).ok()?;
+    let text = fs::read(&file).ok()?;
     Some(Path::new(String::from_utf8_lossy(&text).trim()).join("lib"))
 }
 
@@ -351,7 +364,7 @@ pub fn run(cfg: &Config) -> Result<()> {
 /// parallelism. Zero means "all cores". Never less than one.
 fn resolve_workers(jobs: usize) -> usize {
     if jobs == 0 {
-        std::thread::available_parallelism().map_or(1, usize::from)
+        thread::available_parallelism().map_or(1, usize::from)
     } else {
         jobs
     }
@@ -359,8 +372,8 @@ fn resolve_workers(jobs: usize) -> usize {
 }
 
 /// Apply `f` to every item across up to `workers` threads pulling from a shared
-/// cursor, so a few heavy items do not stall the rest. Results are collected in
-/// arbitrary order; `None` results are dropped.
+/// cursor, so a few heavy items do not stall the rest. Results keep input
+/// order; `None` results are dropped.
 fn par_map<T, R, F>(items: &[T], workers: usize, f: F) -> Vec<R>
 where
     T: Sync,
@@ -371,17 +384,17 @@ where
     if workers <= 1 {
         return items.iter().filter_map(&f).collect();
     }
-    let cursor = std::sync::atomic::AtomicUsize::new(0);
+    let cursor = AtomicUsize::new(0);
     let mut out = Vec::new();
-    std::thread::scope(|scope| {
+    thread::scope(|scope| {
         let handles: Vec<_> = (0..workers)
             .map(|_| {
                 scope.spawn(|| {
                     let mut local = Vec::new();
                     loop {
-                        let i = cursor.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let i = cursor.fetch_add(1, Ordering::Relaxed);
                         let Some(item) = items.get(i) else { break };
-                        local.extend(f(item));
+                        local.extend(f(item).map(|r| (i, r)));
                     }
                     local
                 })
@@ -391,7 +404,8 @@ where
             out.extend(h.join().expect("worker panicked"));
         }
     });
-    out
+    out.sort_unstable_by_key(|&(i, _)| i);
+    out.into_iter().map(|(_, r)| r).collect()
 }
 
 /// Patch every file, distributing them across workers that pull from a shared
@@ -414,15 +428,15 @@ fn patch_all(
         return Ok(missing);
     }
 
-    let cursor = std::sync::atomic::AtomicUsize::new(0);
+    let cursor = AtomicUsize::new(0);
     let mut results: Vec<Result<Vec<(PathBuf, String)>>> = Vec::new();
-    std::thread::scope(|scope| {
+    thread::scope(|scope| {
         let handles: Vec<_> = (0..workers)
             .map(|_| {
                 scope.spawn(|| {
                     let mut missing = Vec::new();
                     loop {
-                        let i = cursor.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let i = cursor.fetch_add(1, Ordering::Relaxed);
                         let Some(file) = files.get(i) else { break };
                         patch_one(file, target, cache, cfg, mods, &mut missing)?;
                     }
@@ -573,7 +587,7 @@ fn collect_files(paths: &[PathBuf], recursive: bool) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut dirs = Vec::new();
     for p in paths {
-        match std::fs::symlink_metadata(p) {
+        match fs::symlink_metadata(p) {
             Ok(m) if m.file_type().is_symlink() => {}
             Ok(m) if m.is_dir() => dirs.push(p.clone()),
             Ok(_) => out.push(p.clone()),
@@ -581,10 +595,10 @@ fn collect_files(paths: &[PathBuf], recursive: bool) -> Vec<PathBuf> {
         }
     }
     while let Some(dir) = dirs.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
+        let Ok(entries) = sorted_entries(&dir) else {
             continue;
         };
-        for entry in entries.flatten() {
+        for entry in entries {
             // file_type() is served from the directory entry (getdents d_type)
             // without an extra stat on the common filesystems.
             let Ok(ft) = entry.file_type() else {
@@ -703,7 +717,7 @@ fn parse_dlopen_json(json: &str) -> Vec<Vec<String>> {
 }
 
 fn read(path: &Path) -> Result<Vec<u8>> {
-    std::fs::read(path).map_err(|source| Error::Io {
+    fs::read(path).map_err(|source| Error::Io {
         path: path.to_path_buf(),
         source,
     })
@@ -715,7 +729,7 @@ fn read(path: &Path) -> Result<Vec<u8>> {
 fn read_if_elf(path: &Path) -> Option<Vec<u8>> {
     use std::io::Read;
 
-    let mut file = std::fs::File::open(path).ok()?;
+    let mut file = fs::File::open(path).ok()?;
     let mut magic = [0u8; 4];
     if file.read_exact(&mut magic).is_err() || &magic != b"\x7fELF" {
         return None;
@@ -727,7 +741,40 @@ fn read_if_elf(path: &Path) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_dlopen_json;
+    use super::{collect_files, par_map, parse_dlopen_json};
+    use std::fs;
+    use std::thread;
+    use std::time::Duration;
+
+    #[test]
+    fn par_map_keeps_input_order() {
+        let items: Vec<u32> = (0..64).collect();
+        let mapped = par_map(&items, 4, |&i| {
+            // Make early items slow so later ones finish first.
+            thread::sleep(Duration::from_millis(u64::from(64 - i) / 8));
+            (i % 3 != 0).then_some(i)
+        });
+        assert_eq!(
+            mapped,
+            items
+                .iter()
+                .copied()
+                .filter(|i| i % 3 != 0)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn collect_files_is_sorted() {
+        let root = tempfile::tempdir().unwrap();
+        for name in ["z.so", "b.so", "a.so"] {
+            fs::write(root.path().join(name), []).unwrap();
+        }
+        assert_eq!(
+            collect_files(&[root.path().to_path_buf()], false),
+            ["a.so", "b.so", "z.so"].map(|name| root.path().join(name))
+        );
+    }
 
     #[test]
     fn dlopen_json_groups_alternatives() {
