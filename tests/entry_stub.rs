@@ -24,11 +24,13 @@ const STUB_CODE: &[u8] = &[
     0xc9, 0x74, 0x03, 0x49, 0x89, 0x01, 0x31, 0xd2, 0xff, 0xe0,
 ];
 
-fn stub_file() -> PathBuf {
+/// Each test gets its own file: tests run in parallel and a shared path
+/// could be truncated by one test while another reads it.
+fn stub_file(name: &str) -> PathBuf {
     let mut blob = b"TESTSTUB".to_vec();
     blob.extend_from_slice(&[0; 8]);
     blob.extend_from_slice(STUB_CODE);
-    let p = Path::new(env!("CARGO_TARGET_TMPDIR")).join("entry_stub.bin");
+    let p = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("{name}.stub"));
     std::fs::write(&p, blob).unwrap();
     p
 }
@@ -73,7 +75,7 @@ fn check(fixture: &str) {
     if !zig_available() {
         return;
     }
-    let stub = stub_file();
+    let stub = stub_file(fixture);
     let stub = stub.to_str().unwrap();
     let bin = copy(fixture, "stub");
     let entry = original_entry(&bin);
@@ -120,7 +122,10 @@ fn keeps_overlay_at_the_file_end() {
     std::fs::write(&bin, &data).unwrap();
     let entry = original_entry(&bin);
 
-    patch(&bin, &["--set-entry-stub", stub_file().to_str().unwrap()]);
+    patch(
+        &bin,
+        &["--set-entry-stub", stub_file("overlay").to_str().unwrap()],
+    );
     assert!(std::fs::read(&bin).unwrap().ends_with(overlay));
     assert_stub_layout(&bin, entry);
     assert_runs(&bin);
