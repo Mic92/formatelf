@@ -29,10 +29,15 @@ pub fn endianness(e: Endian) -> Endianness {
     }
 }
 
-fn pod<T: object::Pod>(data: &[u8]) -> Result<&T> {
-    object::from_bytes(data)
-        .map(|(v, _)| v)
-        .map_err(|()| Error::Parse("truncated struct".into()))
+// ELF does not require headers to be naturally aligned in the file, so copy
+// instead of casting in place.
+fn pod<T: object::Pod>(data: &[u8]) -> Result<T> {
+    if data.len() < core::mem::size_of::<T>() {
+        return Err(Error::Parse("truncated struct".into()));
+    }
+    // SAFETY: the length is checked above, and `Pod` types are valid for any
+    // bit pattern.
+    Ok(unsafe { data.as_ptr().cast::<T>().read_unaligned() })
 }
 
 /// Narrow a widened IR value to a 32-bit on-disk field, refusing to silently
@@ -65,7 +70,7 @@ pub(crate) fn read_ehdr(data: &[u8]) -> Result<(Ehdr, Encoding, u16, u16)> {
     ident.copy_from_slice(&data[..16]);
     let (ehdr, phnum, shnum) = match class {
         Class::Elf64 => {
-            let h: &elf::FileHeader64<Endianness> = pod(data)?;
+            let h: elf::FileHeader64<Endianness> = pod(data)?;
             let ehdr = Ehdr {
                 e_type: h.e_type.get(e),
                 machine: h.e_machine.get(e),
@@ -85,7 +90,7 @@ pub(crate) fn read_ehdr(data: &[u8]) -> Result<(Ehdr, Encoding, u16, u16)> {
             (ehdr, h.e_phnum.get(e), h.e_shnum.get(e))
         }
         Class::Elf32 => {
-            let h: &elf::FileHeader32<Endianness> = pod(data)?;
+            let h: elf::FileHeader32<Endianness> = pod(data)?;
             let ehdr = Ehdr {
                 e_type: h.e_type.get(e),
                 machine: h.e_machine.get(e),
@@ -200,7 +205,7 @@ pub(crate) fn read_phdr(enc: Encoding, data: &[u8]) -> Result<Phdr> {
     let e = endianness(enc.endian);
     match enc.class {
         Class::Elf64 => {
-            let p: &elf::ProgramHeader64<Endianness> = pod(data)?;
+            let p: elf::ProgramHeader64<Endianness> = pod(data)?;
             Ok(Phdr {
                 p_type: p.p_type.get(e),
                 flags: p.p_flags.get(e),
@@ -213,7 +218,7 @@ pub(crate) fn read_phdr(enc: Encoding, data: &[u8]) -> Result<Phdr> {
             })
         }
         Class::Elf32 => {
-            let p: &elf::ProgramHeader32<Endianness> = pod(data)?;
+            let p: elf::ProgramHeader32<Endianness> = pod(data)?;
             Ok(Phdr {
                 p_type: p.p_type.get(e),
                 flags: p.p_flags.get(e),
@@ -267,7 +272,7 @@ pub(crate) fn read_shdr(enc: Encoding, data: &[u8]) -> Result<Shdr> {
     let e = endianness(enc.endian);
     match enc.class {
         Class::Elf64 => {
-            let s: &elf::SectionHeader64<Endianness> = pod(data)?;
+            let s: elf::SectionHeader64<Endianness> = pod(data)?;
             Ok(Shdr {
                 name: s.sh_name.get(e),
                 sh_type: s.sh_type.get(e),
@@ -282,7 +287,7 @@ pub(crate) fn read_shdr(enc: Encoding, data: &[u8]) -> Result<Shdr> {
             })
         }
         Class::Elf32 => {
-            let s: &elf::SectionHeader32<Endianness> = pod(data)?;
+            let s: elf::SectionHeader32<Endianness> = pod(data)?;
             Ok(Shdr {
                 name: s.sh_name.get(e),
                 sh_type: s.sh_type.get(e),
@@ -342,14 +347,14 @@ pub(crate) fn read_dyn(enc: Encoding, data: &[u8]) -> Result<DynEntry> {
     let e = endianness(enc.endian);
     match enc.class {
         Class::Elf64 => {
-            let d: &elf::Dyn64<Endianness> = pod(data)?;
+            let d: elf::Dyn64<Endianness> = pod(data)?;
             Ok(DynEntry {
                 tag: i64::from_ne_bytes(d.d_tag.get(e).to_ne_bytes()),
                 val: d.d_val.get(e),
             })
         }
         Class::Elf32 => {
-            let d: &elf::Dyn32<Endianness> = pod(data)?;
+            let d: elf::Dyn32<Endianness> = pod(data)?;
             Ok(DynEntry {
                 tag: i64::from(i32::from_ne_bytes(d.d_tag.get(e).to_ne_bytes())),
                 val: u64::from(d.d_val.get(e)),
@@ -413,6 +418,24 @@ pub fn dyn_size(class: Class) -> usize {
 mod tests {
     use super::*;
     use crate::ir::Shdr;
+
+    #[test]
+    fn reads_phdr_at_unaligned_offset() {
+        // Node SEA binaries (GitHub Copilot CLI) place the phdr table at an
+        // offset that is only 4-byte aligned.
+        let enc = Encoding {
+            class: Class::Elf64,
+            endian: Endian::Little,
+        };
+        let mut buf = [0u64; 8];
+        let bytes = object::pod::bytes_of_slice_mut(&mut buf);
+        let phdr = &mut bytes[4..4 + 56];
+        phdr[..4].copy_from_slice(&1u32.to_le_bytes()); // PT_LOAD
+        phdr[32..40].copy_from_slice(&0x1234u64.to_le_bytes()); // p_filesz
+        let p = read_phdr(enc, phdr).unwrap();
+        assert_eq!(p.p_type, 1);
+        assert_eq!(p.filesz, 0x1234);
+    }
 
     #[test]
     fn extended_counts_use_section0_escapes() {
